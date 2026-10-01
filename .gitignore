@@ -1,5 +1,6 @@
 node_modules/
 dist/
+releases/
 artifacts/
 coverage/
 references/
@@ -7,10 +8,16 @@ references/
 .env.*
 !.env.example
 *.local.json
+*.local.*
+private/
+secrets/
+.firebase/
 *service-account*.json
 *credentials*.json
 *.pem
 *.key
+*.p12
+*.pfx
 *.log
 .DS_Store
 test-results/
