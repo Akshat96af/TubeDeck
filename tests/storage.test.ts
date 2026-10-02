@@ -1,5 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("idb", () => ({ openDB: async () => ({}) }));
+vi.mock("../src/background/app-config", () => ({
+  getAppConfig: async () => ({
+    firebaseApiKey: "maintainer-firebase",
+    googleClientId: "maintainer-client",
+  }),
+}));
 let local: Record<string, unknown>, session: Record<string, unknown>;
 const settings = {
   model: "test-model",
@@ -28,6 +34,23 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("user key lifetime", () => {
+  it("uses the packaged project even when old settings contain empty or different identifiers", async () => {
+    local.settings = {
+      ...settings,
+      firebaseApiKey: "old-project",
+      googleClientId: "",
+    };
+    const storage = await import("../src/background/storage");
+    expect(await storage.getSettings()).toMatchObject({
+      firebaseApiKey: "maintainer-firebase",
+      googleClientId: "maintainer-client",
+    });
+    await storage.setSettings(settings);
+    expect(local.settings).toEqual({
+      model: settings.model,
+      rememberKey: false,
+    });
+  });
   it("keeps default keys in session storage and returns only a presence flag", async () => {
     const storage = await import("../src/background/storage");
     await storage.setSettings(settings, "test-private-value");

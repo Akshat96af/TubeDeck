@@ -8,7 +8,6 @@ import {
   LogOut,
   Play,
   ShieldCheck,
-  Settings2,
 } from "lucide-react";
 import type { Settings, PublicUser, Snapshot } from "../shared/types";
 import { bridge, isPreview } from "../ui/rpc";
@@ -28,9 +27,13 @@ function SettingsApp() {
     [cancellable, setCancellable] = useState(""),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const redirect = isPreview
     ? "Available after loading the extension"
     : chrome.identity.getRedirectURL();
+  const configured = Boolean(
+    settings.firebaseApiKey && settings.googleClientId,
+  );
   useEffect(() => {
     document.documentElement.dataset.theme = matchMedia(
       "(prefers-color-scheme:dark)",
@@ -42,6 +45,7 @@ function SettingsApp() {
       .promise.then((s) => {
         setSettings(s.settings);
         setUser(s.user);
+        setLoaded(true);
       })
       .catch((e) => setError(e.message));
     const auth = (event: string, data: PublicUser | undefined) => {
@@ -103,6 +107,12 @@ function SettingsApp() {
           Google sign-in is required for AI features. Your Gemini API usage
           stays on your own key.
         </p>
+        {loaded && !configured && (
+          <p className="banner" role="status">
+            Google sign-in is not configured in this build. The TubeDeck
+            maintainer needs to include the app configuration before sharing it.
+          </p>
+        )}
         {user ? (
           <>
             <p>
@@ -127,12 +137,9 @@ function SettingsApp() {
         ) : (
           <button
             className="primary"
-            disabled={
-              busy || !settings.firebaseApiKey || !settings.googleClientId
-            }
+            disabled={busy || !configured}
             onClick={() =>
               void run(async () => {
-                await save();
                 setUser(await bridge.request<PublicUser>("sign-in").promise);
               })
             }
@@ -255,81 +262,44 @@ function SettingsApp() {
           </button>
         </div>
       </section>
-      <section className="settings-card">
-        <Settings2 size={22} />
-        <h2>Project configuration</h2>
+      <details className="settings-card setup-details">
+        <summary>Sign-in help</summary>
         <p>
-          For the project maintainer: connect the Firebase project used for
-          Google sign-in. These are public client identifiers, not
-          service-account credentials.
+          TubeDeck includes its own Google sign-in configuration. You only need
+          your Google account and a Gemini API key.
         </p>
-        <label className="field">
-          Firebase web API key
-          <input
-            value={settings.firebaseApiKey}
-            autoComplete="off"
-            onChange={(e) =>
-              setSettings((s) => ({
-                ...s,
-                firebaseApiKey: e.target.value.trim(),
-              }))
-            }
-          />
-        </label>
-        <label className="field">
-          Google OAuth web client ID
-          <input
-            value={settings.googleClientId}
-            onChange={(e) =>
-              setSettings((s) => ({
-                ...s,
-                googleClientId: e.target.value.trim(),
-              }))
-            }
-          />
-        </label>
         <label className="field">
           OAuth redirect URL
           <input readOnly value={redirect} />
           <small>
-            Add this exact URL to your Google OAuth web client's authorized
-            redirect URIs.
+            For the maintainer: register this exact URL on the app's Google
+            OAuth web client. Add its hostname to Firebase Authentication's
+            authorized domains.
           </small>
         </label>
         <button
-          className="primary"
-          disabled={busy}
-          onClick={() => void run(save)}
+          className="secondary"
+          disabled={busy || isPreview}
+          onClick={() =>
+            void run(async () => {
+              await navigator.clipboard.writeText(redirect);
+              setNotice("Sign-in callback URL copied.");
+            })
+          }
         >
-          Save project configuration
+          Copy callback URL
         </button>
-        <details className="setup-details">
-          <summary>Setup instructions</summary>
-          <ol>
-            <li>
-              Create a Firebase project and enable Authentication → Google.
-            </li>
-            <li>
-              Use its web API key above. Create a Google OAuth web application
-              client and register the redirect URL shown here.
-            </li>
-            <li>
-              Configure the OAuth consent screen and test users while the app is
-              in testing.
-            </li>
-            <li>
-              Use that web client ID above, save, then sign in. Never paste a
-              client secret or service-account JSON here.
-            </li>
-          </ol>
-          <p>
-            There is no deployed backend or cloud sync in this build. Google
-            sign-in gates the packaged client, but an open-source client can be
-            modified; server-side enforcement is needed before offering
-            developer-funded resources.
-          </p>
-        </details>
-      </section>
+        <p>
+          <a
+            className="text-button"
+            href="docs/SETUP.md"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Maintainer setup guide <ExternalLink size={12} />
+          </a>
+        </p>
+      </details>
       <p className="quiet">
         Notes and screenshots stay in this extension’s local database. Chats
         last for the current tab/session and may reset if the extension service

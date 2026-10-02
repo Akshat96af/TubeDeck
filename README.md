@@ -2,7 +2,9 @@
 
 A YouTube companion for the things that make you pause: a new idea, an unfamiliar reference, a product, or an interesting discussion. Bring your own Gemini API key and activate AI for the current video when you want it.
 
-TubeDeck is a Manifest V3 extension for desktop Chrome and compatible Chromium browsers. Its panel sits below the YouTube player and moves below the wide player in theatre mode. It uses React, TypeScript, and esbuild, with no hosted application backend.
+TubeDeck is a Manifest V3 extension for desktop Chrome and compatible Chromium browsers. Its panel adapts to the player layout. It uses React, TypeScript, and esbuild, with no hosted application backend.
+
+The task panel opens to the left of the video in normal mode on windows at least 1100 pixels wide. Theatre mode and smaller windows use a panel below the player. Labelled tabs provide Ask AI, Transcript, Notes, Comments, Downloads, and More. Opening a tab does not activate AI. More includes the context capsule; Downloads opens the manager for choosing quality and a save location. Temporary Gemini gateway errors receive up to two cancellable retries; a response that has started streaming is never replayed automatically.
 
 **Status:** installable development build. Automated tests cover the AI gateway, cancellation, authentication, key storage, exports, and media container handling. Browser testing was explicitly skipped for this build. Live Google/Firebase/Gemini integration and playback of real YouTube downloads remain unverified. See [limitations](docs/LIMITATIONS.md).
 
@@ -32,10 +34,10 @@ npm run build
 
 1. Open `chrome://extensions` (or your Chromium browser's extensions page).
 2. Enable Developer mode, choose **Load unpacked**, and select the generated `dist` directory.
-3. Open TubeDeck's Settings from its toolbar icon. Follow [setup](docs/SETUP.md) to configure Google/Firebase sign-in and enter your own Gemini key.
+3. Open TubeDeck's Settings from its toolbar icon, sign in with Google, and enter your own Gemini key. Maintainers building from source must first follow the [one-time Firebase setup](docs/SETUP.md).
 4. Reload an existing YouTube watch tab. Choose **Activate for this video** when ready. Activation reads the accessible transcript and makes one recommendation request.
 
-No API keys or account credentials belong in source files. Firebase settings and the user's Gemini key are entered in the installed extension. Google sign-in does not grant Gemini API access automatically.
+No API keys or account credentials belong in source files. Maintainers supply public Firebase identifiers through ignored `app-config.local.json`; the build packages those identifiers automatically. Users enter only their own Gemini key in the extension. Google sign-in does not grant Gemini API access automatically.
 
 To create a distributable ZIP:
 

@@ -1,6 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { readAppConfig, validateAppConfig } from "./app-config.mjs";
+const publicConfig = await readAppConfig();
 const candidates = new Set();
 // Git is the authority for what could be published, including tracked files that
 // would now be ignored. Scan built text separately; no credential values are logged.
@@ -45,8 +47,29 @@ for (const file of candidates) {
     )
   )
     continue;
-  const data = await readFile(file, "utf8").catch(() => null);
+  let data = await readFile(file, "utf8").catch(() => null);
   if (data === null) continue;
+  // Only the designated generated asset may contain the maintainer's public
+  // Firebase identifier. Source files, all other assets, and every other key
+  // remain fully scanned. Reject unknown fields rather than hiding them.
+  if (file.replaceAll("\\", "/") === "dist/app-config.json") {
+    try {
+      const config = validateAppConfig(JSON.parse(data));
+      if (
+        config.firebaseApiKey !== publicConfig.firebaseApiKey ||
+        config.googleClientId !== publicConfig.googleClientId
+      )
+        throw new Error(
+          "Build configuration differs from local configuration.",
+        );
+      data = JSON.stringify({
+        ...config,
+        firebaseApiKey: "[public Firebase identifier]",
+      });
+    } catch {
+      failures.push(`${file} (unexpected public app configuration)`);
+    }
+  }
   files++;
   if (
     patterns.some((p) => {

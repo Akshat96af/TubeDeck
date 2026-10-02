@@ -4,9 +4,9 @@ This document separates implemented paths from live behavior that still needs ve
 
 ## External integrations
 
-- Google/Firebase sign-in requires the installer's project configuration. No real credentials were supplied for this build, and no live sign-in was performed.
+- Google/Firebase sign-in uses the maintainer's packaged app configuration. The maintainer must register each release's OAuth callback and Firebase authorized domain. No live browser sign-in was performed.
 - Gemini requires the user's key. The test suite checks request construction, streaming, evidence metadata, batching, quota failures, and cancellation without paid API calls.
-- YouTube changes its page structure. Transcript and comment retrieval depend on accessible DOM elements. Missing/localized transcript controls may require opening the transcript manually or pasting one.
+- YouTube changes its page structure. Transcripts first try the player’s caption tracks, then accessible transcript DOM elements; comments use accessible DOM elements. Missing/localized transcript controls may require opening the transcript manually or pasting one.
 - The normal/theatre layout placement, native caption hover, visual capture, and animations are implemented but not validated in a real browser during this continuation.
 
 ## Downloads

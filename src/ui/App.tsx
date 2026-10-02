@@ -53,6 +53,7 @@ import { bridge, isPreview } from "./rpc";
 import { Markdown, Sources, SearchSuggestions } from "./Markdown";
 import { capsule, capsuleZip, saveBlob } from "../shared/capsule";
 import { z } from "zod";
+import { PanelNavigation, panelItems, type PanelTask } from "./PanelNavigation";
 
 const initial: Snapshot = {
   active: false,
@@ -68,14 +69,7 @@ const initial: Snapshot = {
   sources: [],
   tokens: 0,
 };
-const tabs = [
-  { id: "chat", label: "Chat", Icon: MessageCircle },
-  { id: "transcript", label: "Transcript", Icon: ListVideo },
-  { id: "notes", label: "Notes", Icon: BookOpen },
-  { id: "comments", label: "Comments", Icon: MessageCircle },
-  { id: "tools", label: "Tools", Icon: Layers3 },
-] as const;
-type Tab = (typeof tabs)[number]["id"];
+type Tab = PanelTask;
 interface Result {
   title: string;
   text: string;
@@ -112,6 +106,29 @@ export function App() {
   const [state, setState] = useState(initial),
     [tab, setTab] = useState<Tab>("chat"),
     [collapsed, setCollapsed] = useState(false);
+  const shellRef = useRef<HTMLElement>(null);
+  function closePanel() {
+    setCollapsed(true);
+    setHoverOpen(false);
+    clearTimeout(hoverTimer.current);
+    document.getElementById(`panel-${tab}`)?.focus();
+  }
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const resize = () =>
+      parent.postMessage(
+        {
+          type: "yc-resize",
+          height: Math.ceil(shell.getBoundingClientRect().height),
+        },
+        "https://www.youtube.com",
+      );
+    const observer = new ResizeObserver(resize);
+    observer.observe(shell);
+    resize();
+    return () => observer.disconnect();
+  }, []);
   const [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -303,6 +320,8 @@ export function App() {
         setFocusRecommendations(false);
         setNoteText("");
         setCapsuleOpen(false);
+        setCollapsed(false);
+        setTab("chat");
         setError("");
         setNotice("");
         setState((s) => ({
@@ -324,6 +343,7 @@ export function App() {
         }
       }
       if (event === "caption-action" && !running.current) {
+        setCollapsed(false);
         setHover(data);
         if (data.action === "check")
           void run("Checking this claim", async () => {
@@ -357,6 +377,8 @@ export function App() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [stream, state.messages.length]);
   async function activate() {
+    setTab("chat");
+    setCollapsed(false);
     await run("Preparing this video", async () => {
       const videoEpoch = epoch.current;
       const snap = await rpc<Snapshot>("activate");
@@ -698,1247 +720,1241 @@ export function App() {
     ) ?? [];
   const video = state.video;
   return (
-    <main className={`companion ${collapsed ? "collapsed" : ""}`}>
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Play size={15} fill="currentColor" />
+    <main
+      ref={shellRef}
+      className={`companion panel-shell ${collapsed ? "collapsed" : ""}`}
+    >
+      <PanelNavigation
+        task={tab}
+        expanded={!collapsed}
+        active={state.active}
+        busy={busy}
+        notes={state.notes.length}
+        onSelect={(next) => {
+          {
+            setTab(next);
+            setCollapsed(false);
+            setHoverOpen(false);
+            clearTimeout(hoverTimer.current);
+          }
+        }}
+        onActivate={() => void activate()}
+        onPause={() => {
+          clearTimeout(hoverTimer.current);
+          setHoverOpen(false);
+          if (running.current) stop();
+          void bridge
+            .request("deactivate")
+            .promise.then(() => refresh())
+            .catch((e) => setError(e.message));
+        }}
+        onStop={stop}
+        onSettings={() =>
+          void bridge
+            .request("settings-open")
+            .promise.catch((e) => setError(e.message))
+        }
+      />
+      <div
+        className="task-panel"
+        hidden={collapsed}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !hoverOpen && !capsuleOpen) {
+            event.preventDefault();
+            closePanel();
+          }
+        }}
+      >
+        <header className="task-panel-header">
+          <h2>{panelItems.find((item) => item.id === tab)?.label}</h2>
+          <span className="task-panel-context">
+            {video?.title || "Your video, a little more useful."}
           </span>
-          <span>TubeDeck</span>
-          <span className="brand-divider" />
-          <span className={`live-label ${state.active ? "on" : ""}`}>
-            <i />
-            {state.active ? "This video is connected" : "Ready when you are"}
-          </span>
-        </div>
-        <div className="header-actions">
-          <button
-            className="capsule-button"
-            title="Continue in another AI"
-            onClick={() => setCapsuleOpen(!capsuleOpen)}
-          >
-            <PackageOpen size={15} />
-            <span>Context capsule</span>
-          </button>
           <button
             className="icon-button"
-            title="Settings"
-            aria-label="Settings"
-            onClick={() =>
-              void bridge
-                .request("settings-open")
-                .promise.catch((e) => setError(e.message))
-            }
+            title="Close panel"
+            aria-label="Close task panel"
+            onClick={closePanel}
           >
-            <Settings2 size={17} />
+            <X size={18} />
           </button>
-          <button
-            className="icon-button"
-            title={collapsed ? "Expand" : "Collapse"}
-            aria-label={collapsed ? "Expand companion" : "Collapse companion"}
-            onClick={() => {
-              setCollapsed(!collapsed);
-              parent.postMessage(
-                { type: "yc-resize", collapsed: !collapsed },
-                "https://www.youtube.com",
-              );
-            }}
+        </header>
+        {isPreview && (
+          <div className="preview-label">
+            Visual preview · fixture video · real AI features require the
+            installed extension
+          </div>
+        )}
+        {error && (
+          <div className="banner error" role="alert">
+            <CircleHelp size={15} />
+            <span>{error}</span>
+            <button aria-label="Dismiss error" onClick={() => setError("")}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {notice && (
+          <div className="banner" role="status">
+            <Check size={15} />
+            <span>{notice}</span>
+            <button aria-label="Dismiss notice" onClick={() => setNotice("")}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        <div className="workspace">
+          <div
+            className="chat-layout panel-task"
+            id="task-chat"
+            role="region"
+            aria-labelledby="panel-chat"
+            hidden={tab !== "chat"}
           >
-            <ChevronDown size={18} className={collapsed ? "rotated" : ""} />
-          </button>
-        </div>
-      </header>
-      {!collapsed && (
-        <>
-          {isPreview && (
-            <div className="preview-label">
-              Visual preview · fixture video · real AI features require the
-              installed extension
-            </div>
-          )}
-          <nav className="tabs" aria-label="TubeDeck sections">
-            {tabs.map(({ id, label, Icon }) => (
-              <button
-                key={id}
-                className={tab === id ? "selected" : ""}
-                aria-current={tab === id ? "page" : undefined}
-                onClick={() => {
-                  setTab(id);
-                  setStream("");
-                }}
-              >
-                <Icon size={15} />
-                {label}
-                {id === "notes" && state.notes.length > 0 && (
-                  <span className="count">{state.notes.length}</span>
-                )}
-              </button>
-            ))}
-            <span className="tab-spacer" />
-            {state.active ? (
-              <button
-                className="pause-ai"
-                onClick={() => {
-                  clearTimeout(hoverTimer.current);
-                  setHoverOpen(false);
-                  if (running.current) stop();
-                  void bridge
-                    .request("deactivate")
-                    .promise.then(() => refresh())
-                    .catch((e) => setError(e.message));
-                }}
-              >
-                <Pause size={13} />
-                Pause AI
-              </button>
-            ) : (
-              <button
-                className="activate-small"
-                onClick={() => void activate()}
-                disabled={Boolean(busy)}
-              >
-                <Sparkles size={14} />
-                Activate
-              </button>
-            )}
-          </nav>
-          {error && (
-            <div className="banner error" role="alert">
-              <CircleHelp size={15} />
-              <span>{error}</span>
-              <button aria-label="Dismiss error" onClick={() => setError("")}>
-                <X size={14} />
-              </button>
-            </div>
-          )}
-          {notice && (
-            <div className="banner" role="status">
-              <Check size={15} />
-              <span>{notice}</span>
-              <button aria-label="Dismiss notice" onClick={() => setNotice("")}>
-                <X size={14} />
-              </button>
-            </div>
-          )}
-          <div className="workspace">
-            {tab === "chat" && (
-              <div className="chat-layout">
-                <section className="conversation">
-                  {state.messages.length > 0 && (
-                    <div className="conversation-actions">
+            <section className="conversation">
+              {state.messages.length > 0 && (
+                <div className="conversation-actions">
+                  <button
+                    className="text-button"
+                    disabled={Boolean(busy)}
+                    onClick={() =>
+                      void run("Clearing conversation", async () => {
+                        await rpc("chat-clear");
+                        setState((s) => ({ ...s, messages: [] }));
+                        setResult(null);
+                        setStream("");
+                      })
+                    }
+                  >
+                    <Trash2 size={13} />
+                    Clear conversation
+                  </button>
+                </div>
+              )}
+              <div className="conversation-scroll" ref={scrollRef}>
+                {state.messages.length === 0 && !result && !busy && (
+                  <div className="welcome">
+                    <span className="eyebrow">
+                      <span className="tiny-line" /> A little more from every
+                      video
+                    </span>
+                    <h1>
+                      Watch. Wonder.
+                      <br />
+                      <span>Go a little deeper.</span>
+                    </h1>
+                    <p>
+                      Ask about a moment, unpack a reference, or keep an idea.
+                      <br className="wide-only" /> Your video is the starting
+                      point.
+                    </p>
+                    {!state.active && (
                       <button
+                        className="primary activate"
+                        onClick={() => void activate()}
+                      >
+                        <Sparkles size={16} />
+                        Activate for this video
+                        <ArrowUpRight size={16} />
+                      </button>
+                    )}
+                    {!state.active && (
+                      <span className="quiet">
+                        {state.user && state.settings.hasKey
+                          ? "Uses your Gemini key. You can stop at any time."
+                          : "Sign in and connect your Gemini key in settings."}
+                      </span>
+                    )}
+                    {recommended.length > 0 && (
+                      <div className="suggestions">
+                        {recommended.map((q) => (
+                          <button key={q} onClick={() => void sendQuestion(q)}>
+                            {q}
+                            <ArrowUpRight size={13} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {state.messages.map((m) => (
+                  <article key={m.id} className={`message ${m.role}`}>
+                    <span className="message-label">
+                      {m.role === "user" ? "You" : "TubeDeck"}
+                      {m.incomplete ? " · stopped" : ""}
+                    </span>
+                    <Markdown text={m.text} sources={m.sources} seek={seek} />
+                    {m.sources && <Sources sources={m.sources} />}
+                  </article>
+                ))}
+                {result && (
+                  <article className="answer-card">
+                    <div className="section-heading">
+                      <span className="eyebrow">{result.title}</span>
+                      <button
+                        className="icon-button"
+                        aria-label="Close explanation"
+                        onClick={() => setResult(null)}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <Markdown
+                      text={result.text}
+                      sources={result.sources}
+                      seek={seek}
+                    />
+                    {result.searchUsed === false && (
+                      <p className="quiet">
+                        No web search evidence returned for this answer.
+                      </p>
+                    )}
+                    <Sources sources={result.sources} />
+                    <SearchSuggestions html={result.searchSuggestions} />
+                    {result.productSearch && (
+                      <a
                         className="text-button"
+                        href={`https://www.google.com/search?q=${encodeURIComponent(result.productSearch)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Search Google
+                        <ExternalLink size={13} />
+                      </a>
+                    )}
+                    <div className="row">
+                      <button
+                        className="secondary"
                         disabled={Boolean(busy)}
                         onClick={() =>
-                          void run("Clearing conversation", async () => {
-                            await rpc("chat-clear");
-                            setState((s) => ({ ...s, messages: [] }));
-                            setResult(null);
-                            setStream("");
+                          void run("Saving note", async () => {
+                            await addNote({
+                              title: result.title,
+                              body: result.text,
+                              sources: result.sources,
+                            });
+                            setNotice("Saved to notes.");
                           })
                         }
                       >
-                        <Trash2 size={13} />
-                        Clear conversation
+                        <Bookmark size={14} />
+                        Save note
                       </button>
+                      {hover && (
+                        <button
+                          className="secondary"
+                          disabled={disabled}
+                          onClick={() => void explain(hover.text, true)}
+                        >
+                          Explain deeper
+                          <ArrowUpRight size={14} />
+                        </button>
+                      )}
                     </div>
-                  )}
-                  <div className="conversation-scroll" ref={scrollRef}>
-                    {state.messages.length === 0 && !result && !busy && (
-                      <div className="welcome">
-                        <span className="eyebrow">
-                          <span className="tiny-line" /> A little more from
-                          every video
-                        </span>
-                        <h1>
-                          Watch. Wonder.
-                          <br />
-                          <span>Go a little deeper.</span>
-                        </h1>
-                        <p>
-                          Ask about a moment, unpack a reference, or keep an
-                          idea.
-                          <br className="wide-only" /> Your video is the
-                          starting point.
-                        </p>
-                        {!state.active && (
-                          <button
-                            className="primary activate"
-                            onClick={() => void activate()}
-                          >
-                            <Sparkles size={16} />
-                            Activate for this video
-                            <ArrowUpRight size={16} />
-                          </button>
-                        )}
-                        {!state.active && (
-                          <span className="quiet">
-                            {state.user && state.settings.hasKey
-                              ? "Uses your Gemini key. You can stop at any time."
-                              : "Sign in and connect your Gemini key in settings."}
-                          </span>
-                        )}
-                        {recommended.length > 0 && (
-                          <div className="suggestions">
-                            {recommended.map((q) => (
-                              <button
-                                key={q}
-                                onClick={() => void sendQuestion(q)}
-                              >
-                                {q}
-                                <ArrowUpRight size={13} />
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {state.messages.map((m) => (
-                      <article key={m.id} className={`message ${m.role}`}>
-                        <span className="message-label">
-                          {m.role === "user" ? "You" : "TubeDeck"}
-                          {m.incomplete ? " · stopped" : ""}
-                        </span>
-                        <Markdown
-                          text={m.text}
-                          sources={m.sources}
-                          seek={seek}
-                        />
-                        {m.sources && <Sources sources={m.sources} />}
-                      </article>
-                    ))}
-                    {result && (
-                      <article className="answer-card">
-                        <div className="section-heading">
-                          <span className="eyebrow">{result.title}</span>
-                          <button
-                            className="icon-button"
-                            aria-label="Close explanation"
-                            onClick={() => setResult(null)}
-                          >
-                            <X size={15} />
-                          </button>
-                        </div>
-                        <Markdown
-                          text={result.text}
-                          sources={result.sources}
-                          seek={seek}
-                        />
-                        {result.searchUsed === false && (
-                          <p className="quiet">
-                            No web search evidence returned for this answer.
-                          </p>
-                        )}
-                        <Sources sources={result.sources} />
-                        <SearchSuggestions html={result.searchSuggestions} />
-                        {result.productSearch && (
-                          <a
-                            className="text-button"
-                            href={`https://www.google.com/search?q=${encodeURIComponent(result.productSearch)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Search Google
-                            <ExternalLink size={13} />
-                          </a>
-                        )}
-                        <div className="row">
-                          <button
-                            className="secondary"
-                            disabled={Boolean(busy)}
-                            onClick={() =>
-                              void run("Saving note", async () => {
-                                await addNote({
-                                  title: result.title,
-                                  body: result.text,
-                                  sources: result.sources,
-                                });
-                                setNotice("Saved to notes.");
-                              })
-                            }
-                          >
-                            <Bookmark size={14} />
-                            Save note
-                          </button>
-                          {hover && (
-                            <button
-                              className="secondary"
-                              disabled={disabled}
-                              onClick={() => void explain(hover.text, true)}
-                            >
-                              Explain deeper
-                              <ArrowUpRight size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </article>
-                    )}
-                    {busy && stream && (
-                      <article className="message assistant streaming">
-                        <span className="message-label">TubeDeck</span>
-                        <Markdown text={stream} seek={seek} />
-                      </article>
-                    )}
-                  </div>
-                  <form
-                    className="composer"
-                    onSubmit={(e) => {
+                  </article>
+                )}
+                {busy && stream && (
+                  <article className="message assistant streaming">
+                    <span className="message-label">TubeDeck</span>
+                    <Markdown text={stream} seek={seek} />
+                  </article>
+                )}
+              </div>
+              <form
+                className="composer"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void sendQuestion();
+                }}
+              >
+                <textarea
+                  rows={1}
+                  aria-label="Ask about this video"
+                  placeholder={
+                    state.active
+                      ? "Ask anything about this video…"
+                      : "Activate this video to start a conversation…"
+                  }
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      void sendQuestion();
-                    }}
+                      if (!disabled) void sendQuestion();
+                    }
+                  }}
+                />
+                <button
+                  className="send-button"
+                  aria-label="Send question"
+                  disabled={disabled || !question.trim()}
+                >
+                  <ArrowUp size={18} />
+                </button>
+              </form>
+            </section>
+            <aside className="context-rail">
+              <span className="eyebrow">Your video, connected</span>
+              <div className="video-summary">
+                <span className="video-icon">
+                  <Play size={16} />
+                </span>
+                <h2>{video?.title || "Open a YouTube video"}</h2>
+                <p>
+                  {video?.channel || "YouTube"}
+                  {video?.duration ? ` · ${timeLabel(video.duration)}` : ""}
+                </p>
+              </div>
+              <div className="rail-actions">
+                <button
+                  disabled={disabled}
+                  onClick={() => void analyze("summary", "Video overview")}
+                >
+                  <FileText size={17} />
+                  <span>
+                    <b>Give me the overview</b>
+                    <small>Key ideas, with timestamps</small>
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+                <button disabled={disabled} onClick={() => void visualNotes()}>
+                  <Camera size={17} />
+                  <span>
+                    <b>Keep the visual moments</b>
+                    <small>Useful frames, thoughtful notes</small>
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+                {productsSuggested && (
+                  <button
+                    disabled={disabled}
+                    onClick={() => void listProducts()}
                   >
-                    <textarea
-                      rows={1}
-                      aria-label="Ask about this video"
-                      placeholder={
-                        state.active
-                          ? "Ask anything about this video…"
-                          : "Activate this video to start a conversation…"
-                      }
-                      value={question}
-                      onChange={(e) => setQuestion(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          if (!disabled) void sendQuestion();
-                        }
-                      }}
-                    />
-                    <button
-                      className="send-button"
-                      aria-label="Send question"
-                      disabled={disabled || !question.trim()}
-                    >
-                      <ArrowUp size={18} />
-                    </button>
-                  </form>
-                </section>
-                <aside className="context-rail">
-                  <span className="eyebrow">Your video, connected</span>
-                  <div className="video-summary">
-                    <span className="video-icon">
-                      <Play size={16} />
-                    </span>
-                    <h2>{video?.title || "Open a YouTube video"}</h2>
-                    <p>
-                      {video?.channel || "YouTube"}
-                      {video?.duration ? ` · ${timeLabel(video.duration)}` : ""}
-                    </p>
-                  </div>
-                  <div className="rail-actions">
-                    <button
-                      disabled={disabled}
-                      onClick={() => void analyze("summary", "Video overview")}
-                    >
-                      <FileText size={17} />
-                      <span>
-                        <b>Give me the overview</b>
-                        <small>Key ideas, with timestamps</small>
-                      </span>
-                      <ChevronRight size={15} />
-                    </button>
-                    <button
-                      disabled={disabled}
-                      onClick={() => void visualNotes()}
-                    >
-                      <Camera size={17} />
-                      <span>
-                        <b>Keep the visual moments</b>
-                        <small>Useful frames, thoughtful notes</small>
-                      </span>
-                      <ChevronRight size={15} />
-                    </button>
-                    {productsSuggested && (
-                      <button
-                        disabled={disabled}
-                        onClick={() => void listProducts()}
-                      >
-                        <ShoppingBag size={17} />
-                        <span>
-                          <b>List products</b>
-                          <small>Choose an object in this frame</small>
-                        </span>
-                        <ChevronRight size={15} />
-                      </button>
-                    )}
-                    <button onClick={() => setTab("comments")}>
-                      <MessageCircle size={17} />
-                      <span>
-                        <b>What are viewers saying?</b>
-                        <small>Explore the discussion</small>
-                      </span>
-                      <ChevronRight size={15} />
-                    </button>
-                  </div>
-                  <div className="privacy-note">
-                    <ShieldCheck size={15} />
+                    <ShoppingBag size={17} />
                     <span>
-                      Starts with your click.
-                      <br />
-                      Your notes stay on this device.
+                      <b>List products</b>
+                      <small>Choose an object in this frame</small>
                     </span>
-                  </div>
-                </aside>
+                    <ChevronRight size={15} />
+                  </button>
+                )}
+                <button onClick={() => setTab("comments")}>
+                  <MessageCircle size={17} />
+                  <span>
+                    <b>What are viewers saying?</b>
+                    <small>Explore the discussion</small>
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+              <div className="privacy-note">
+                <ShieldCheck size={15} />
+                <span>
+                  Starts with your click.
+                  <br />
+                  Your notes stay on this device.
+                </span>
+              </div>
+            </aside>
+          </div>
+          <section
+            className="full-pane panel-task"
+            id="task-transcript"
+            role="region"
+            aria-labelledby="panel-transcript"
+            hidden={tab !== "transcript"}
+          >
+            <div className="pane-toolbar">
+              <div>
+                <h2>Follow every word</h2>
+                <p>
+                  {state.transcript?.detail ||
+                    "Load the transcript, or paste one if captions aren’t available."}
+                </p>
+              </div>
+              <div className="row">
+                <button
+                  className="secondary"
+                  disabled={disabled}
+                  onClick={() =>
+                    void run("Reading transcript", async () => {
+                      const transcript = await rpc<Transcript>("transcript");
+                      setState((s) => ({ ...s, transcript }));
+                    })
+                  }
+                >
+                  Reload
+                </button>
+                <button className="secondary" onClick={() => setPaste(!paste)}>
+                  <Clipboard size={14} />
+                  Paste
+                </button>
+              </div>
+            </div>
+            {paste && (
+              <div className="paste-box">
+                <textarea
+                  aria-label="Paste transcript"
+                  placeholder="[0:00] First line…"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                />
+                <button
+                  className="primary"
+                  disabled={!pasteText.trim() || Boolean(busy)}
+                  onClick={() =>
+                    void run("Importing transcript", async () => {
+                      const transcript = await rpc<Transcript>(
+                        "transcript-paste",
+                        { text: pasteText },
+                      );
+                      setState((s) => ({ ...s, transcript }));
+                      setPaste(false);
+                      setNotice(
+                        "Transcript imported. Untimed lines stay untimed.",
+                      );
+                    })
+                  }
+                >
+                  Use transcript
+                </button>
               </div>
             )}
-            {tab === "transcript" && (
-              <section className="full-pane">
-                <div className="pane-toolbar">
-                  <div>
-                    <h2>Follow every word</h2>
-                    <p>
-                      {state.transcript?.detail ||
-                        "Load the transcript, or paste one if captions aren’t available."}
-                    </p>
-                  </div>
-                  <div className="row">
-                    <button
-                      className="secondary"
-                      disabled={disabled}
-                      onClick={() =>
-                        void run("Reading transcript", async () => {
-                          const transcript =
-                            await rpc<Transcript>("transcript");
-                          setState((s) => ({ ...s, transcript }));
-                        })
-                      }
-                    >
-                      Reload
-                    </button>
-                    <button
-                      className="secondary"
-                      onClick={() => setPaste(!paste)}
-                    >
-                      <Clipboard size={14} />
-                      Paste
-                    </button>
-                  </div>
+            <label className="search-field">
+              <Search size={16} />
+              <input
+                aria-label="Find in transcript"
+                placeholder="Find a word or moment"
+                value={find}
+                onChange={(e) => setFind(e.target.value)}
+              />
+              <span>{filteredSegments.length} lines</span>
+            </label>
+            <div className="transcript-list">
+              {filteredSegments.slice(0, 600).map((s, i) => (
+                <div key={`${s.start}:${i}`} className="transcript-line">
+                  <button
+                    className="time-link"
+                    disabled={s.start === null}
+                    onClick={() => s.start !== null && seek(s.start)}
+                  >
+                    {timeLabel(s.start)}
+                  </button>
+                  <p onMouseLeave={() => clearTimeout(hoverTimer.current)}>
+                    {s.text.split(/(\s+)/).map((word, k) =>
+                      /^\s+$/.test(word) ? (
+                        word
+                      ) : (
+                        <span
+                          key={k}
+                          onMouseEnter={() =>
+                            hoverText(word, s.start ?? undefined, s.text)
+                          }
+                        >
+                          {word}
+                        </span>
+                      ),
+                    )}
+                  </p>
+                  <button
+                    className="line-action"
+                    disabled={disabled}
+                    onClick={() => {
+                      setHover({
+                        text: s.text,
+                        time: s.start ?? undefined,
+                      });
+                      setTab("chat");
+                      void explain(s.text, true);
+                    }}
+                    title="Explain this line"
+                  >
+                    <CircleHelp size={14} />
+                  </button>
+                  <button
+                    className="line-action"
+                    disabled={disabled}
+                    title="Fact-check this line"
+                    onClick={() => {
+                      setTab("chat");
+                      void run("Checking this claim", async () =>
+                        show(
+                          "Evidence check",
+                          await ai("check", { selection: s.text }),
+                        ),
+                      );
+                    }}
+                  >
+                    <ShieldCheck size={14} />
+                  </button>
                 </div>
-                {paste && (
-                  <div className="paste-box">
-                    <textarea
-                      aria-label="Paste transcript"
-                      placeholder="[0:00] First line…"
-                      value={pasteText}
-                      onChange={(e) => setPasteText(e.target.value)}
-                    />
-                    <button
-                      className="primary"
-                      disabled={!pasteText.trim() || Boolean(busy)}
-                      onClick={() =>
-                        void run("Importing transcript", async () => {
-                          const transcript = await rpc<Transcript>(
-                            "transcript-paste",
-                            { text: pasteText },
-                          );
-                          setState((s) => ({ ...s, transcript }));
-                          setPaste(false);
-                          setNotice(
-                            "Transcript imported. Untimed lines stay untimed.",
-                          );
-                        })
-                      }
-                    >
-                      Use transcript
-                    </button>
-                  </div>
-                )}
-                <label className="search-field">
-                  <Search size={16} />
-                  <input
-                    aria-label="Find in transcript"
-                    placeholder="Find a word or moment"
-                    value={find}
-                    onChange={(e) => setFind(e.target.value)}
-                  />
-                  <span>{filteredSegments.length} lines</span>
-                </label>
-                <div className="transcript-list">
-                  {filteredSegments.slice(0, 600).map((s, i) => (
-                    <div key={`${s.start}:${i}`} className="transcript-line">
+              ))}
+            </div>
+            {filteredSegments.length > 600 && (
+              <p className="quiet">
+                Showing the first 600 matches. Refine your search to find
+                another passage.
+              </p>
+            )}
+          </section>
+          <section
+            className="full-pane panel-task"
+            id="task-notes"
+            role="region"
+            aria-labelledby="panel-notes"
+            hidden={tab !== "notes"}
+          >
+            <div className="pane-toolbar">
+              <div>
+                <h2>Keep what matters.</h2>
+                <p>Notes and visual moments, in the order they happened.</p>
+              </div>
+              <button
+                className="secondary"
+                disabled={disabled}
+                onClick={() => void visualNotes()}
+              >
+                <Sparkles size={14} />
+                Capture visual notes
+              </button>
+            </div>
+            <div className="note-composer">
+              <input
+                placeholder="Write a thought worth keeping…"
+                aria-label="New note"
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+              />
+              <button
+                className="icon-button"
+                aria-label="Save note at current time"
+                disabled={!noteText.trim() || Boolean(busy)}
+                onClick={() =>
+                  void run("Saving note", async () => {
+                    const c = await page("context");
+                    await addNote({
+                      title: "My note",
+                      body: noteText,
+                      time: c.time,
+                    });
+                    setNoteText("");
+                  })
+                }
+              >
+                <Plus size={18} />
+              </button>
+              <button
+                className="secondary"
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  void run("Saving screenshot", async () => {
+                    const c = await page("capture");
+                    await addNote({
+                      title: "Captured moment",
+                      body: noteText,
+                      time: c.time,
+                      image: c.image,
+                      kind: "screenshot",
+                    });
+                    setNoteText("");
+                  })
+                }
+              >
+                <Camera size={15} />
+                Capture now
+              </button>
+            </div>
+            {state.notes.length === 0 ? (
+              <Empty
+                Icon={Bookmark}
+                title="A home for your takeaways"
+                text="Save a thought, capture a frame, or let AI find the visual moments."
+              />
+            ) : (
+              <div className="notes-grid">
+                {state.notes.map((n) => (
+                  <article className="note-card" key={n.id}>
+                    <div className="note-meta">
                       <button
                         className="time-link"
-                        disabled={s.start === null}
-                        onClick={() => s.start !== null && seek(s.start)}
+                        disabled={n.time === null}
+                        onClick={() => n.time !== null && seek(n.time)}
                       >
-                        {timeLabel(s.start)}
+                        {timeLabel(n.time)}
                       </button>
-                      <p onMouseLeave={() => clearTimeout(hoverTimer.current)}>
-                        {s.text.split(/(\s+)/).map((word, k) =>
-                          /^\s+$/.test(word) ? (
-                            word
-                          ) : (
-                            <span
-                              key={k}
-                              onMouseEnter={() =>
-                                hoverText(word, s.start ?? undefined, s.text)
-                              }
-                            >
-                              {word}
-                            </span>
-                          ),
-                        )}
-                      </p>
+                      <span>{n.kind}</span>
                       <button
-                        className="line-action"
-                        disabled={disabled}
-                        onClick={() => {
-                          setHover({
-                            text: s.text,
-                            time: s.start ?? undefined,
-                          });
-                          setTab("chat");
-                          void explain(s.text, true);
-                        }}
-                        title="Explain this line"
+                        className="icon-button"
+                        aria-label={`Delete ${n.title}`}
+                        disabled={Boolean(busy)}
+                        onClick={() =>
+                          void run("Deleting note", async () => {
+                            const notes = await rpc<Note[]>("note-delete", {
+                              id: n.id,
+                            });
+                            setState((s) => ({ ...s, notes }));
+                          })
+                        }
                       >
-                        <CircleHelp size={14} />
-                      </button>
-                      <button
-                        className="line-action"
-                        disabled={disabled}
-                        title="Fact-check this line"
-                        onClick={() => {
-                          setTab("chat");
-                          void run("Checking this claim", async () =>
-                            show(
-                              "Evidence check",
-                              await ai("check", { selection: s.text }),
-                            ),
-                          );
-                        }}
-                      >
-                        <ShieldCheck size={14} />
+                        <Trash2 size={14} />
                       </button>
                     </div>
+                    {n.image && (
+                      <img src={n.image} alt={n.title} loading="lazy" />
+                    )}
+                    <h3>{n.title}</h3>
+                    {["quiz", "flashcards"].includes(n.kind) ? (
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          try {
+                            n.kind === "quiz"
+                              ? setQuiz(quizSchema.parse(parseJson(n.body)))
+                              : setCards(cardsSchema.parse(parseJson(n.body)));
+                            setCardIndex(0);
+                            setFlipped(false);
+                            setAnswers({});
+                            setTab("tools");
+                          } catch {
+                            setError("This saved study set could not be read.");
+                          }
+                        }}
+                      >
+                        Open saved {n.kind}
+                      </button>
+                    ) : (
+                      <>
+                        <p
+                          className="note-body"
+                          onMouseLeave={() => clearTimeout(hoverTimer.current)}
+                        >
+                          {n.body.split(/(\s+)/).map((w, i) =>
+                            /^\s+$/.test(w) ? (
+                              w
+                            ) : (
+                              <span
+                                key={i}
+                                onMouseEnter={() =>
+                                  hoverText(
+                                    w,
+                                    n.time ?? undefined,
+                                    n.body.slice(0, 1500),
+                                  )
+                                }
+                              >
+                                {w}
+                              </span>
+                            ),
+                          )}
+                        </p>
+                        <details className="note-editor">
+                          <summary>Edit note</summary>
+                          <textarea
+                            aria-label={`Edit ${n.title}`}
+                            defaultValue={n.body}
+                            onBlur={(e) => {
+                              if (e.target.value !== n.body)
+                                void bridge
+                                  .request<Note[]>("note-save", {
+                                    note: { ...n, body: e.target.value },
+                                  })
+                                  .promise.then((notes) =>
+                                    setState((s) => ({ ...s, notes })),
+                                  )
+                                  .catch((e) => setError(e.message));
+                            }}
+                          />
+                        </details>
+                        <Sources sources={n.sources ?? []} />
+                        <button
+                          className="text-button"
+                          disabled={disabled}
+                          onClick={() => {
+                            setTab("chat");
+                            void explain(n.body, true);
+                          }}
+                        >
+                          Explain note
+                          <ArrowUpRight size={13} />
+                        </button>
+                      </>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+          <section
+            className="full-pane panel-task"
+            id="task-comments"
+            role="region"
+            aria-labelledby="panel-comments"
+            hidden={tab !== "comments"}
+          >
+            <div className="pane-toolbar">
+              <div>
+                <h2>The other side of the video.</h2>
+                <p>
+                  {state.comments
+                    ? `${state.comments.items.length.toLocaleString()} top-level comments · ${state.comments.complete ? "Reached end of accessible results" : "Partial coverage"}`
+                    : "Load the discussion, see the overall reaction, then find something specific."}
+                </p>
+              </div>
+              <button
+                className="primary"
+                disabled={Boolean(busy)}
+                onClick={() => void loadDiscussion()}
+              >
+                <MessageCircle size={15} />
+                {state.comments ? "Load again" : "Load comments"}
+              </button>
+            </div>
+            {state.comments && (
+              <p className="coverage">{state.comments.detail}</p>
+            )}
+            {commentSummary && (
+              <article className="discussion-summary">
+                <span className="eyebrow">{commentSummary.title}</span>
+                <Markdown
+                  text={commentSummary.text}
+                  sources={commentSummary.sources}
+                />
+                <Sources sources={commentSummary.sources} />
+              </article>
+            )}
+            {state.comments && (
+              <>
+                <form
+                  className="search-field"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void run("Searching viewer comments", async () => {
+                      const r = await ai("comment-question", {
+                        question: commentQuery,
+                      });
+                      setCommentSummary({
+                        title: "Related comments",
+                        ...r,
+                      });
+                      setStream("");
+                    });
+                  }}
+                >
+                  <Search size={16} />
+                  <input
+                    aria-label="Find or ask about comments"
+                    placeholder="Find a keyword, or ask what viewers think…"
+                    value={commentQuery}
+                    onChange={(e) => setCommentQuery(e.target.value)}
+                  />
+                  <button
+                    className="text-button"
+                    disabled={disabled || !commentQuery.trim()}
+                  >
+                    Ask AI
+                    <ArrowUpRight size={14} />
+                  </button>
+                </form>
+                <div className="row">
+                  <span className="quiet">
+                    {filteredComments.length.toLocaleString()} keyword matches
+                  </span>
+                  <button
+                    className="text-button"
+                    disabled={disabled || !state.comments.items.length}
+                    onClick={() =>
+                      void run("Summarizing viewer thoughts", async () => {
+                        setCommentSummary({
+                          title: "What viewers think",
+                          ...(await ai("comments")),
+                        });
+                        setStream("");
+                      })
+                    }
+                  >
+                    Summarize loaded comments
+                  </button>
+                </div>
+                <div className="comment-list">
+                  {filteredComments.slice(0, 100).map((c) => (
+                    <article key={c.id}>
+                      <div>
+                        <strong>{c.author}</strong>
+                        <span>{c.likes} likes</span>
+                        <a
+                          href={c.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="Open comment"
+                        >
+                          <ExternalLink size={13} />
+                        </a>
+                      </div>
+                      <p>{c.text}</p>
+                    </article>
                   ))}
                 </div>
-                {filteredSegments.length > 600 && (
+                {filteredComments.length > 100 && (
                   <p className="quiet">
-                    Showing the first 600 matches. Refine your search to find
-                    another passage.
+                    First 100 matches displayed. Keyword search covers all
+                    retrieved comments.
                   </p>
                 )}
-              </section>
+              </>
             )}
-            {tab === "notes" && (
-              <section className="full-pane">
-                <div className="pane-toolbar">
-                  <div>
-                    <h2>Keep what matters.</h2>
-                    <p>Notes and visual moments, in the order they happened.</p>
-                  </div>
+            {!state.comments && (
+              <Empty
+                Icon={MessageCircle}
+                title="A whole discussion to explore"
+                text="Loading reads top-level comments only. You can stop whenever you have enough."
+              />
+            )}
+          </section>
+          <section
+            className="full-pane panel-task"
+            id="task-downloads"
+            role="region"
+            aria-labelledby="panel-downloads"
+            hidden={tab !== "downloads"}
+          >
+            <div className="pane-toolbar">
+              <div>
+                <h2>Save this video.</h2>
+                <p>Choose from the quality options available for this video.</p>
+              </div>
+            </div>
+            <div className="download-launch">
+              <Download size={32} aria-hidden="true" />
+              <h3>{video?.title || "Your current video"}</h3>
+              <p>
+                The download manager opens in a new tab, where you can choose a
+                quality, save location, and stop a download.
+              </p>
+              <button
+                className="primary"
+                onClick={() =>
+                  void bridge
+                    .request("download-open")
+                    .promise.catch((e) => setError(e.message))
+                }
+              >
+                Open download manager
+              </button>
+            </div>
+          </section>
+          <section
+            className="full-pane panel-task"
+            id="task-tools"
+            role="region"
+            aria-labelledby="panel-tools"
+            hidden={tab !== "tools"}
+          >
+            <div className="pane-toolbar">
+              <div>
+                <h2>More tools.</h2>
+                <p>Every action starts with you.</p>
+              </div>
+            </div>
+            <div className="tools-grid">
+              <Tool
+                Icon={PackageOpen}
+                title="Context capsule"
+                text="Take your notes and conversation to another AI."
+              >
+                <button
+                  className="secondary"
+                  onClick={() => setCapsuleOpen(true)}
+                >
+                  Create capsule
+                </button>
+              </Tool>
+              <Tool
+                Icon={SkipForward}
+                title="Skip paid promotions"
+                text={
+                  sponsorOn
+                    ? `${sponsorSegments.length} segments · enabled for this video`
+                    : "Transcript-guided. Uncertain matches stay manual."
+                }
+              >
+                <button
+                  className={sponsorOn ? "secondary" : "primary"}
+                  disabled={disabled}
+                  onClick={() => void toggleSponsors()}
+                >
+                  {sponsorOn ? "Turn off" : "Enable for this video"}
+                </button>
+              </Tool>
+              <Tool
+                Icon={ShoppingBag}
+                title="What’s in the frame?"
+                text="Identify an object, then research the exact product."
+              >
+                <button
+                  className="secondary"
+                  disabled={disabled}
+                  onClick={() => void listProducts()}
+                >
+                  List products
+                  <ArrowUpRight size={14} />
+                </button>
+              </Tool>
+              <Tool
+                Icon={Download}
+                title="Download this video"
+                text="Check available source formats, with audio. Up to 4K when accessible."
+              >
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void bridge
+                      .request("download-open")
+                      .promise.catch((e) => setError(e.message))
+                  }
+                >
+                  View available formats
+                  <ArrowUpRight size={14} />
+                </button>
+              </Tool>
+              <Tool
+                Icon={BookOpen}
+                title="Make it stick"
+                text="Create a quiz or flashcards from this video."
+              >
+                <div className="row">
                   <button
                     className="secondary"
                     disabled={disabled}
-                    onClick={() => void visualNotes()}
+                    onClick={() => void study("quiz")}
                   >
-                    <Sparkles size={14} />
-                    Capture visual notes
-                  </button>
-                </div>
-                <div className="note-composer">
-                  <input
-                    placeholder="Write a thought worth keeping…"
-                    aria-label="New note"
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                  />
-                  <button
-                    className="icon-button"
-                    aria-label="Save note at current time"
-                    disabled={!noteText.trim() || Boolean(busy)}
-                    onClick={() =>
-                      void run("Saving note", async () => {
-                        const c = await page("context");
-                        await addNote({
-                          title: "My note",
-                          body: noteText,
-                          time: c.time,
-                        });
-                        setNoteText("");
-                      })
-                    }
-                  >
-                    <Plus size={18} />
+                    Quiz
                   </button>
                   <button
                     className="secondary"
-                    disabled={Boolean(busy)}
-                    onClick={() =>
-                      void run("Saving screenshot", async () => {
-                        const c = await page("capture");
-                        await addNote({
-                          title: "Captured moment",
-                          body: noteText,
-                          time: c.time,
-                          image: c.image,
-                          kind: "screenshot",
-                        });
-                        setNoteText("");
-                      })
-                    }
+                    disabled={disabled}
+                    onClick={() => void study("flashcards")}
                   >
-                    <Camera size={15} />
-                    Capture now
+                    Flashcards
                   </button>
                 </div>
-                {state.notes.length === 0 ? (
-                  <Empty
-                    Icon={Bookmark}
-                    title="A home for your takeaways"
-                    text="Save a thought, capture a frame, or let AI find the visual moments."
+              </Tool>
+              <Tool
+                Icon={Play}
+                title="Your pace"
+                text="Set a comfortable playback speed."
+              >
+                <select
+                  aria-label="Playback speed"
+                  defaultValue="1"
+                  onChange={(e) =>
+                    void bridge
+                      .request("page", {
+                        command: "speed",
+                        args: { rate: Number(e.target.value) },
+                      })
+                      .promise.catch((e) => setError(e.message))
+                  }
+                >
+                  {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].map((r) => (
+                    <option key={r} value={r}>
+                      {r}× speed
+                    </option>
+                  ))}
+                </select>
+              </Tool>
+              <Tool
+                Icon={Repeat2}
+                title="Repeat a moment"
+                text={`A: ${timeLabel(loopA)} · B: ${timeLabel(loopB)}`}
+              >
+                <div className="row">
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      void bridge
+                        .request<Video>("page", { command: "context" })
+                        .promise.then((c) => setLoopA(c.time))
+                        .catch((e) => setError(e.message))
+                    }
+                  >
+                    Set A
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      void bridge
+                        .request<Video>("page", { command: "context" })
+                        .promise.then((c) => setLoopB(c.time))
+                        .catch((e) => setError(e.message))
+                    }
+                  >
+                    Set B
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={
+                      loopA === null || loopB === null || loopB <= loopA
+                    }
+                    onClick={() =>
+                      void bridge
+                        .request("page", {
+                          command: "loop",
+                          args: { a: loopA, b: loopB, enabled: true },
+                        })
+                        .promise.then(() => setNotice("A–B repeat enabled."))
+                        .catch((e) => setError(e.message))
+                    }
+                  >
+                    Loop
+                  </button>
+                  <button
+                    className="icon-button"
+                    aria-label="Stop repeat"
+                    onClick={() =>
+                      void bridge
+                        .request("page", {
+                          command: "loop",
+                          args: { enabled: false },
+                        })
+                        .promise.then(() => setNotice("Repeat stopped."))
+                        .catch((e) => setError(e.message))
+                    }
+                  >
+                    <Square size={13} />
+                  </button>
+                </div>
+              </Tool>
+              <Tool
+                Icon={Focus}
+                title="Less distraction"
+                text="Choose what stays around the video."
+              >
+                <label className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={focusRecommendations}
+                    onChange={(e) => {
+                      setFocusRecommendations(e.target.checked);
+                      void bridge
+                        .request("page", {
+                          command: "focus",
+                          args: {
+                            recommendations: e.target.checked,
+                            comments: focusComments,
+                          },
+                        })
+                        .promise.catch((e) => setError(e.message));
+                    }}
                   />
-                ) : (
-                  <div className="notes-grid">
-                    {state.notes.map((n) => (
-                      <article className="note-card" key={n.id}>
-                        <div className="note-meta">
+                  Hide recommendations
+                </label>
+                <label className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={focusComments}
+                    onChange={(e) => {
+                      setFocusComments(e.target.checked);
+                      void bridge
+                        .request("page", {
+                          command: "focus",
+                          args: {
+                            recommendations: focusRecommendations,
+                            comments: e.target.checked,
+                          },
+                        })
+                        .promise.catch((e) => setError(e.message));
+                    }}
+                  />
+                  Hide comments
+                </label>
+              </Tool>
+              <Tool
+                Icon={Bookmark}
+                title="Remember this moment"
+                text="Save a timestamp without using AI."
+              >
+                <button
+                  className="secondary"
+                  disabled={Boolean(busy)}
+                  onClick={() =>
+                    void run("Saving bookmark", async () => {
+                      const c = await page("context");
+                      await addNote({
+                        title: "Bookmarked moment",
+                        time: c.time,
+                        kind: "bookmark",
+                      });
+                      setNotice("Bookmark saved.");
+                    })
+                  }
+                >
+                  Bookmark now
+                </button>
+              </Tool>
+            </div>
+            {objects.length > 0 && (
+              <div className="objects">
+                <h3>Choose the object you mean</h3>
+                <div className="objects-grid">
+                  {objects.map((o, i) => (
+                    <div className="object-card" key={i}>
+                      <strong>{o.name}</strong>
+                      <p>{o.description}</p>
+                      <button
+                        className="secondary"
+                        disabled={disabled}
+                        onClick={() => void product(o)}
+                      >
+                        Identify & research
+                        <ArrowUpRight size={13} />
+                      </button>
+                      <a
+                        className="text-button"
+                        href={`https://www.google.com/search?q=${encodeURIComponent(o.name + " " + o.description)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Search Google
+                        <ExternalLink size={13} />
+                      </a>
+                      <a
+                        className="text-button"
+                        href={`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(o.name + " " + o.description)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Search images by name
+                        <ExternalLink size={13} />
+                      </a>
+                    </div>
+                  ))}
+                </div>
+                <p className="quiet">
+                  Image search uses the object’s description; it is not
+                  reverse-image matching.
+                </p>
+              </div>
+            )}
+            {quiz && (
+              <div className="study-set">
+                <h3>Check your understanding</h3>
+                {quiz.questions.map((q, i) => (
+                  <article key={i}>
+                    <h4>
+                      {i + 1}. {q.question}
+                    </h4>
+                    <div className="quiz-options">
+                      {q.options.map((o, j) => (
+                        <button
+                          className={`secondary ${answers[i] === j ? "chosen" : ""}`}
+                          key={j}
+                          onClick={() => setAnswers((a) => ({ ...a, [i]: j }))}
+                        >
+                          {o}
+                        </button>
+                      ))}
+                    </div>
+                    {answers[i] !== undefined && (
+                      <p className="quiz-feedback">
+                        {answers[i] === q.answer
+                          ? "Correct."
+                          : "Not quite. " + q.options[q.answer] + "."}{" "}
+                        {q.explanation}{" "}
+                        {q.time !== null && (
                           <button
                             className="time-link"
-                            disabled={n.time === null}
-                            onClick={() => n.time !== null && seek(n.time)}
+                            onClick={() => seek(q.time!)}
                           >
-                            {timeLabel(n.time)}
+                            {timeLabel(q.time)}
                           </button>
-                          <span>{n.kind}</span>
-                          <button
-                            className="icon-button"
-                            aria-label={`Delete ${n.title}`}
-                            disabled={Boolean(busy)}
-                            onClick={() =>
-                              void run("Deleting note", async () => {
-                                const notes = await rpc<Note[]>("note-delete", {
-                                  id: n.id,
-                                });
-                                setState((s) => ({ ...s, notes }));
-                              })
-                            }
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                        {n.image && (
-                          <img src={n.image} alt={n.title} loading="lazy" />
                         )}
-                        <h3>{n.title}</h3>
-                        {["quiz", "flashcards"].includes(n.kind) ? (
-                          <button
-                            className="secondary"
-                            onClick={() => {
-                              try {
-                                n.kind === "quiz"
-                                  ? setQuiz(quizSchema.parse(parseJson(n.body)))
-                                  : setCards(
-                                      cardsSchema.parse(parseJson(n.body)),
-                                    );
-                                setCardIndex(0);
-                                setFlipped(false);
-                                setAnswers({});
-                                setTab("tools");
-                              } catch {
-                                setError(
-                                  "This saved study set could not be read.",
-                                );
-                              }
-                            }}
-                          >
-                            Open saved {n.kind}
-                          </button>
-                        ) : (
-                          <>
-                            <p
-                              className="note-body"
-                              onMouseLeave={() =>
-                                clearTimeout(hoverTimer.current)
-                              }
-                            >
-                              {n.body.split(/(\s+)/).map((w, i) =>
-                                /^\s+$/.test(w) ? (
-                                  w
-                                ) : (
-                                  <span
-                                    key={i}
-                                    onMouseEnter={() =>
-                                      hoverText(
-                                        w,
-                                        n.time ?? undefined,
-                                        n.body.slice(0, 1500),
-                                      )
-                                    }
-                                  >
-                                    {w}
-                                  </span>
-                                ),
-                              )}
-                            </p>
-                            <details className="note-editor">
-                              <summary>Edit note</summary>
-                              <textarea
-                                aria-label={`Edit ${n.title}`}
-                                defaultValue={n.body}
-                                onBlur={(e) => {
-                                  if (e.target.value !== n.body)
-                                    void bridge
-                                      .request<Note[]>("note-save", {
-                                        note: { ...n, body: e.target.value },
-                                      })
-                                      .promise.then((notes) =>
-                                        setState((s) => ({ ...s, notes })),
-                                      )
-                                      .catch((e) => setError(e.message));
-                                }}
-                              />
-                            </details>
-                            <Sources sources={n.sources ?? []} />
-                            <button
-                              className="text-button"
-                              disabled={disabled}
-                              onClick={() => {
-                                setTab("chat");
-                                void explain(n.body, true);
-                              }}
-                            >
-                              Explain note
-                              <ArrowUpRight size={13} />
-                            </button>
-                          </>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )}
-            {tab === "comments" && (
-              <section className="full-pane">
-                <div className="pane-toolbar">
-                  <div>
-                    <h2>The other side of the video.</h2>
-                    <p>
-                      {state.comments
-                        ? `${state.comments.items.length.toLocaleString()} top-level comments · ${state.comments.complete ? "Reached end of accessible results" : "Partial coverage"}`
-                        : "Load the discussion, see the overall reaction, then find something specific."}
-                    </p>
-                  </div>
-                  <button
-                    className="primary"
-                    disabled={Boolean(busy)}
-                    onClick={() => void loadDiscussion()}
-                  >
-                    <MessageCircle size={15} />
-                    {state.comments ? "Load again" : "Load comments"}
-                  </button>
-                </div>
-                {state.comments && (
-                  <p className="coverage">{state.comments.detail}</p>
-                )}
-                {commentSummary && (
-                  <article className="discussion-summary">
-                    <span className="eyebrow">{commentSummary.title}</span>
-                    <Markdown
-                      text={commentSummary.text}
-                      sources={commentSummary.sources}
-                    />
-                    <Sources sources={commentSummary.sources} />
-                  </article>
-                )}
-                {state.comments && (
-                  <>
-                    <form
-                      className="search-field"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void run("Searching viewer comments", async () => {
-                          const r = await ai("comment-question", {
-                            question: commentQuery,
-                          });
-                          setCommentSummary({
-                            title: "Related comments",
-                            ...r,
-                          });
-                          setStream("");
-                        });
-                      }}
-                    >
-                      <Search size={16} />
-                      <input
-                        aria-label="Find or ask about comments"
-                        placeholder="Find a keyword, or ask what viewers think…"
-                        value={commentQuery}
-                        onChange={(e) => setCommentQuery(e.target.value)}
-                      />
-                      <button
-                        className="text-button"
-                        disabled={disabled || !commentQuery.trim()}
-                      >
-                        Ask AI
-                        <ArrowUpRight size={14} />
-                      </button>
-                    </form>
-                    <div className="row">
-                      <span className="quiet">
-                        {filteredComments.length.toLocaleString()} keyword
-                        matches
-                      </span>
-                      <button
-                        className="text-button"
-                        disabled={disabled || !state.comments.items.length}
-                        onClick={() =>
-                          void run("Summarizing viewer thoughts", async () => {
-                            setCommentSummary({
-                              title: "What viewers think",
-                              ...(await ai("comments")),
-                            });
-                            setStream("");
-                          })
-                        }
-                      >
-                        Summarize loaded comments
-                      </button>
-                    </div>
-                    <div className="comment-list">
-                      {filteredComments.slice(0, 100).map((c) => (
-                        <article key={c.id}>
-                          <div>
-                            <strong>{c.author}</strong>
-                            <span>{c.likes} likes</span>
-                            <a
-                              href={c.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              aria-label="Open comment"
-                            >
-                              <ExternalLink size={13} />
-                            </a>
-                          </div>
-                          <p>{c.text}</p>
-                        </article>
-                      ))}
-                    </div>
-                    {filteredComments.length > 100 && (
-                      <p className="quiet">
-                        First 100 matches displayed. Keyword search covers all
-                        retrieved comments.
                       </p>
                     )}
-                  </>
-                )}
-                {!state.comments && (
-                  <Empty
-                    Icon={MessageCircle}
-                    title="A whole discussion to explore"
-                    text="Loading reads top-level comments only. You can stop whenever you have enough."
-                  />
-                )}
-              </section>
+                  </article>
+                ))}
+              </div>
             )}
-            {tab === "tools" && (
-              <section className="full-pane">
-                <div className="pane-toolbar">
-                  <div>
-                    <h2>A few useful superpowers.</h2>
-                    <p>Every action starts with you.</p>
-                  </div>
-                </div>
-                <div className="tools-grid">
-                  <Tool
-                    Icon={SkipForward}
-                    title="Skip paid promotions"
-                    text={
-                      sponsorOn
-                        ? `${sponsorSegments.length} segments · enabled for this video`
-                        : "Transcript-guided. Uncertain matches stay manual."
-                    }
-                  >
-                    <button
-                      className={sponsorOn ? "secondary" : "primary"}
-                      disabled={disabled}
-                      onClick={() => void toggleSponsors()}
-                    >
-                      {sponsorOn ? "Turn off" : "Enable for this video"}
-                    </button>
-                  </Tool>
-                  <Tool
-                    Icon={ShoppingBag}
-                    title="What’s in the frame?"
-                    text="Identify an object, then research the exact product."
-                  >
-                    <button
-                      className="secondary"
-                      disabled={disabled}
-                      onClick={() => void listProducts()}
-                    >
-                      List products
-                      <ArrowUpRight size={14} />
-                    </button>
-                  </Tool>
-                  <Tool
-                    Icon={Download}
-                    title="Download this video"
-                    text="Check available source formats, with audio. Up to 4K when accessible."
-                  >
-                    <button
-                      className="secondary"
-                      onClick={() =>
-                        void bridge
-                          .request("download-open")
-                          .promise.catch((e) => setError(e.message))
-                      }
-                    >
-                      View available formats
-                      <ArrowUpRight size={14} />
-                    </button>
-                  </Tool>
-                  <Tool
-                    Icon={BookOpen}
-                    title="Make it stick"
-                    text="Create a quiz or flashcards from this video."
-                  >
-                    <div className="row">
-                      <button
-                        className="secondary"
-                        disabled={disabled}
-                        onClick={() => void study("quiz")}
-                      >
-                        Quiz
-                      </button>
-                      <button
-                        className="secondary"
-                        disabled={disabled}
-                        onClick={() => void study("flashcards")}
-                      >
-                        Flashcards
-                      </button>
-                    </div>
-                  </Tool>
-                  <Tool
-                    Icon={Play}
-                    title="Your pace"
-                    text="Set a comfortable playback speed."
-                  >
-                    <select
-                      aria-label="Playback speed"
-                      defaultValue="1"
-                      onChange={(e) =>
-                        void bridge
-                          .request("page", {
-                            command: "speed",
-                            args: { rate: Number(e.target.value) },
-                          })
-                          .promise.catch((e) => setError(e.message))
-                      }
-                    >
-                      {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].map((r) => (
-                        <option key={r} value={r}>
-                          {r}× speed
-                        </option>
-                      ))}
-                    </select>
-                  </Tool>
-                  <Tool
-                    Icon={Repeat2}
-                    title="Repeat a moment"
-                    text={`A: ${timeLabel(loopA)} · B: ${timeLabel(loopB)}`}
-                  >
-                    <div className="row">
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          void bridge
-                            .request<Video>("page", { command: "context" })
-                            .promise.then((c) => setLoopA(c.time))
-                            .catch((e) => setError(e.message))
-                        }
-                      >
-                        Set A
-                      </button>
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          void bridge
-                            .request<Video>("page", { command: "context" })
-                            .promise.then((c) => setLoopB(c.time))
-                            .catch((e) => setError(e.message))
-                        }
-                      >
-                        Set B
-                      </button>
-                      <button
-                        className="secondary"
-                        disabled={
-                          loopA === null || loopB === null || loopB <= loopA
-                        }
-                        onClick={() =>
-                          void bridge
-                            .request("page", {
-                              command: "loop",
-                              args: { a: loopA, b: loopB, enabled: true },
-                            })
-                            .promise.then(() =>
-                              setNotice("A–B repeat enabled."),
-                            )
-                            .catch((e) => setError(e.message))
-                        }
-                      >
-                        Loop
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label="Stop repeat"
-                        onClick={() =>
-                          void bridge
-                            .request("page", {
-                              command: "loop",
-                              args: { enabled: false },
-                            })
-                            .promise.then(() => setNotice("Repeat stopped."))
-                            .catch((e) => setError(e.message))
-                        }
-                      >
-                        <Square size={13} />
-                      </button>
-                    </div>
-                  </Tool>
-                  <Tool
-                    Icon={Focus}
-                    title="Less distraction"
-                    text="Choose what stays around the video."
-                  >
-                    <label className="toggle-row">
-                      <input
-                        type="checkbox"
-                        checked={focusRecommendations}
-                        onChange={(e) => {
-                          setFocusRecommendations(e.target.checked);
-                          void bridge
-                            .request("page", {
-                              command: "focus",
-                              args: {
-                                recommendations: e.target.checked,
-                                comments: focusComments,
-                              },
-                            })
-                            .promise.catch((e) => setError(e.message));
-                        }}
-                      />
-                      Hide recommendations
-                    </label>
-                    <label className="toggle-row">
-                      <input
-                        type="checkbox"
-                        checked={focusComments}
-                        onChange={(e) => {
-                          setFocusComments(e.target.checked);
-                          void bridge
-                            .request("page", {
-                              command: "focus",
-                              args: {
-                                recommendations: focusRecommendations,
-                                comments: e.target.checked,
-                              },
-                            })
-                            .promise.catch((e) => setError(e.message));
-                        }}
-                      />
-                      Hide comments
-                    </label>
-                  </Tool>
-                  <Tool
-                    Icon={Bookmark}
-                    title="Remember this moment"
-                    text="Save a timestamp without using AI."
-                  >
-                    <button
-                      className="secondary"
-                      disabled={Boolean(busy)}
-                      onClick={() =>
-                        void run("Saving bookmark", async () => {
-                          const c = await page("context");
-                          await addNote({
-                            title: "Bookmarked moment",
-                            time: c.time,
-                            kind: "bookmark",
-                          });
-                          setNotice("Bookmark saved.");
-                        })
-                      }
-                    >
-                      Bookmark now
-                    </button>
-                  </Tool>
-                </div>
-                {objects.length > 0 && (
-                  <div className="objects">
-                    <h3>Choose the object you mean</h3>
-                    <div className="objects-grid">
-                      {objects.map((o, i) => (
-                        <div className="object-card" key={i}>
-                          <strong>{o.name}</strong>
-                          <p>{o.description}</p>
-                          <button
-                            className="secondary"
-                            disabled={disabled}
-                            onClick={() => void product(o)}
-                          >
-                            Identify & research
-                            <ArrowUpRight size={13} />
-                          </button>
-                          <a
-                            className="text-button"
-                            href={`https://www.google.com/search?q=${encodeURIComponent(o.name + " " + o.description)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Search Google
-                            <ExternalLink size={13} />
-                          </a>
-                          <a
-                            className="text-button"
-                            href={`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(o.name + " " + o.description)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Search images by name
-                            <ExternalLink size={13} />
-                          </a>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="quiet">
-                      Image search uses the object’s description; it is not
-                      reverse-image matching.
-                    </p>
-                  </div>
-                )}
-                {quiz && (
-                  <div className="study-set">
-                    <h3>Check your understanding</h3>
-                    {quiz.questions.map((q, i) => (
-                      <article key={i}>
-                        <h4>
-                          {i + 1}. {q.question}
-                        </h4>
-                        <div className="quiz-options">
-                          {q.options.map((o, j) => (
-                            <button
-                              className={`secondary ${answers[i] === j ? "chosen" : ""}`}
-                              key={j}
-                              onClick={() =>
-                                setAnswers((a) => ({ ...a, [i]: j }))
-                              }
-                            >
-                              {o}
-                            </button>
-                          ))}
-                        </div>
-                        {answers[i] !== undefined && (
-                          <p className="quiz-feedback">
-                            {answers[i] === q.answer
-                              ? "Correct."
-                              : "Not quite. " + q.options[q.answer] + "."}{" "}
-                            {q.explanation}{" "}
-                            {q.time !== null && (
-                              <button
-                                className="time-link"
-                                onClick={() => seek(q.time!)}
-                              >
-                                {timeLabel(q.time)}
-                              </button>
-                            )}
-                          </p>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                )}
-                {cards && cards.cards.length > 0 && (
-                  <div className="study-set">
-                    <div className="section-heading">
-                      <h3>Flashcards</h3>
-                      <span className="quiet">
-                        {cardIndex + 1} / {cards.cards.length}
-                      </span>
-                    </div>
-                    <button
-                      className={`flashcard ${flipped ? "flipped" : ""}`}
-                      onClick={() => setFlipped(!flipped)}
-                    >
-                      <span className="eyebrow">
-                        {flipped ? "Answer" : "Question"}
-                      </span>
-                      <p>
-                        {flipped
-                          ? cards.cards[cardIndex].back
-                          : cards.cards[cardIndex].front}
-                      </p>
-                      <small>Click to flip</small>
-                    </button>
-                    <div className="row">
-                      <button
-                        className="secondary"
-                        onClick={() => {
-                          setCardIndex(
-                            (cardIndex - 1 + cards.cards.length) %
-                              cards.cards.length,
-                          );
-                          setFlipped(false);
-                        }}
-                      >
-                        <ChevronLeft size={14} />
-                        Previous
-                      </button>
-                      <button
-                        className="secondary"
-                        onClick={() => {
-                          setCardIndex((cardIndex + 1) % cards.cards.length);
-                          setFlipped(false);
-                        }}
-                      >
-                        Next
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </section>
-            )}
-          </div>
-          <footer className="statusbar">
-            <div>
-              {busy ? (
-                <>
-                  <LoaderCircle size={13} className="spin" />
-                  <span>{busy}</span>
-                </>
-              ) : (
-                <>
-                  <span className={`status-dot ${state.active ? "on" : ""}`} />
-                  <span>
-                    {state.transcript
-                      ? `${state.transcript.segments.length} transcript lines`
-                      : "AI is quiet until activated"}
+            {cards && cards.cards.length > 0 && (
+              <div className="study-set">
+                <div className="section-heading">
+                  <h3>Flashcards</h3>
+                  <span className="quiet">
+                    {cardIndex + 1} / {cards.cards.length}
                   </span>
-                </>
-              )}
-            </div>
-            <div>
-              {busy ? (
-                <button className="stop-button" onClick={stop}>
-                  <Square size={11} fill="currentColor" />
-                  Stop
+                </div>
+                <button
+                  className={`flashcard ${flipped ? "flipped" : ""}`}
+                  onClick={() => setFlipped(!flipped)}
+                >
+                  <span className="eyebrow">
+                    {flipped ? "Answer" : "Question"}
+                  </span>
+                  <p>
+                    {flipped
+                      ? cards.cards[cardIndex].back
+                      : cards.cards[cardIndex].front}
+                  </p>
+                  <small>Click to flip</small>
                 </button>
-              ) : (
-                <span>
-                  {state.tokens
-                    ? `${state.tokens.toLocaleString()} tokens reported`
-                    : "Your key. Your control."}
-                </span>
-              )}
-            </div>
-          </footer>
-        </>
+                <div className="row">
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setCardIndex(
+                        (cardIndex - 1 + cards.cards.length) %
+                          cards.cards.length,
+                      );
+                      setFlipped(false);
+                    }}
+                  >
+                    <ChevronLeft size={14} />
+                    Previous
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setCardIndex((cardIndex + 1) % cards.cards.length);
+                      setFlipped(false);
+                    }}
+                  >
+                    Next
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+        <footer className="statusbar">
+          <span>
+            {state.active
+              ? "AI active for this video"
+              : "AI is quiet until activated"}
+          </span>
+          <span>
+            {state.tokens
+              ? `${state.tokens.toLocaleString()} tokens reported`
+              : "Your key. Your control."}
+          </span>
+        </footer>
+      </div>
+      {collapsed && error && (
+        <div className="banner error panel-alert" role="alert">
+          <span>{error}</span>
+          <button aria-label="Dismiss error" onClick={() => setError("")}>
+            <X size={14} />
+          </button>
+        </div>
       )}
+      {collapsed && notice && (
+        <div className="banner panel-alert" role="status">
+          <span>{notice}</span>
+          <button aria-label="Dismiss notice" onClick={() => setNotice("")}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {hoverOpen && hover && (
         <aside
           className="hover-card"

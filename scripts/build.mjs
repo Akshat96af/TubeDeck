@@ -2,8 +2,18 @@ import { build, context } from "esbuild";
 import { mkdir, copyFile, writeFile, rm } from "node:fs/promises";
 import { writeIcons } from "./icons.mjs";
 import { writeLicenses } from "./licenses.mjs";
+import { readAppConfig } from "./app-config.mjs";
 const watch = process.argv.includes("--watch");
 await mkdir("dist", { recursive: true });
+const appConfig = await readAppConfig();
+await writeFile(
+  "dist/app-config.json",
+  JSON.stringify(appConfig, null, 2) + "\n",
+);
+if (!appConfig.firebaseApiKey)
+  console.warn(
+    "Google sign-in is unconfigured. Maintainers: create app-config.local.json before distributing this build.",
+  );
 await copyFile("public/manifest.json", "dist/manifest.json");
 await writeIcons();
 for (const file of [

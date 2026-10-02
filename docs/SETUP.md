@@ -1,16 +1,24 @@
 # Configure TubeDeck
 
-The extension is built without embedded account credentials. Configure the following in TubeDeck Settings after loading `dist` as an unpacked extension.
+Users of a configured release only sign in with Google and enter their own Gemini key. Firebase belongs to the TubeDeck maintainer and is configured once at build time.
+
+## Maintainer build configuration
+
+Copy `app-config.example.json` to `app-config.local.json` in the project root. Fill in `firebaseApiKey` with the Firebase project's Web API key and `googleClientId` with the same project's Google OAuth **Web application** client ID. Run `npm run package`, then reload the extension from `dist` in `chrome://extensions` (or `brave://extensions`). Close and reopen its settings page.
+
+`app-config.local.json` is ignored by Git. The build copies only these two validated public identifiers into `dist/app-config.json`; packaging includes that generated file. Unknown fields are rejected. Never put a Gemini key, OAuth client secret, service-account credential, or any future paid-service secret in this file. Changing the local configuration requires rebuilding, including during watch mode.
+
+Firebase Web API keys identify the Firebase project and are intentionally visible in distributed clients. They do not authorize access to protected backend resources. Keep future shared provider secrets on the server and enforce authentication and quotas there. See [Firebase API keys](https://firebase.google.com/docs/projects/api-keys). The repository scanner permits the exact configured Firebase identifier only in this generated asset; it still scans source files and all other build assets for keys.
 
 ## Google sign-in with Firebase
 
 1. Create or choose a Firebase project. Enable **Authentication → Sign-in method → Google** and configure the project support email.
 2. In the same Google Cloud project, configure the OAuth consent screen. Add your Google account as a test user while the OAuth application is in testing.
-3. Use a **Web application** OAuth client associated with that project. Open TubeDeck Settings and copy the exact **OAuth redirect URL** shown there. Add that URL, including the trailing slash, to the web client's **Authorized redirect URIs**. It has the form `https://YOUR_EXTENSION_ID.chromiumapp.org/`.
+3. Use a **Web application** OAuth client associated with that project. In Google Cloud Console → **Google Auth Platform → Clients** (or APIs & Services → Credentials), open the client whose ID you placed in the local build configuration. Open TubeDeck Settings → **Sign-in help** and copy the exact **OAuth redirect URL**. Add that URL, including the trailing slash, to the client's **Authorized redirect URIs**, then save. It has the form `https://YOUR_EXTENSION_ID.chromiumapp.org/`. It belongs in redirect URIs, not JavaScript origins.
 4. In Firebase Authentication's authorized domains, add the corresponding `YOUR_EXTENSION_ID.chromiumapp.org` hostname. Keep the Google provider and OAuth client configuration aligned with the same project; if you select an existing Google provider web client, edit that client's redirect URIs.
-5. Copy the project's **Web API key** from Firebase project settings and the **OAuth web client ID** into TubeDeck's Project configuration fields. Save, then click **Sign in with Google**.
+5. Set the OAuth app's public name to TubeDeck and provide the support email. Save the Google provider in Firebase. Under Google Auth Platform → Audience, add your account as a test user if the app is in testing. After saving the console changes, click **Sign in with Google** in TubeDeck.
 
-Only the public client identifiers above go in these fields. TubeDeck neither needs nor accepts a client secret, Firebase service-account JSON, private key, or admin credential. Do not paste those into Git, an issue, or a chat. The Firebase key here is separate from the user's Gemini key.
+Users do not enter or edit Firebase identifiers in the extension. The Gemini key is separate from this maintainer configuration. No Firebase Hosting deployment or Firebase CLI installation is needed just for sign-in. If the Firebase Web API key has API restrictions, retain the Firebase Authentication APIs it needs (Identity Toolkit and Secure Token); do not use a Gemini-only key for Firebase. Check browser application restrictions against the extension before release.
 
 The implementation opens a user-initiated Google OAuth flow, validates callback origin/path and state, then exchanges the Google access token through Firebase's `accounts:signInWithIdp` endpoint. Firebase tokens stay in extension session storage. See [Chrome identity](https://developer.chrome.com/docs/extensions/reference/api/identity#method-launchWebAuthFlow) and the [Firebase Auth REST reference](https://firebase.google.com/docs/reference/rest/auth#section-sign-in-with-oauth-credential).
 

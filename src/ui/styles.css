@@ -1418,3 +1418,182 @@ body:has(.settings-shell) {
   font-size: 13px;
   color: var(--muted);
 }
+
+/* Readable task panel beside the player. */
+html.panel-document,
+.panel-document body,
+.panel-document #root {
+  height: auto;
+  background: transparent;
+}
+.companion.panel-shell {
+  height: auto;
+  min-width: 300px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--strong-line);
+  border-radius: 12px;
+}
+.task-panel {
+  height: 560px;
+  min-height: 420px;
+  max-height: 850px;
+  display: flex;
+  flex-direction: column;
+}
+.task-panel[hidden],
+.panel-task[hidden] {
+  display: none !important;
+}
+.task-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.task-panel-header h2 {
+  margin: 0;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.task-panel-context {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+}
+.panel-navigation {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.panel-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.panel-brand {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 650;
+}
+.panel-control-spacer {
+  flex: 1;
+}
+.panel-activation {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: 12px;
+}
+.panel-activation.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.panel-items {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 10px;
+}
+.panel-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.panel-item:hover,
+.panel-item.is-selected {
+  background: var(--hover);
+}
+.panel-item.is-selected {
+  box-shadow: inset 0 -2px var(--accent-text);
+  font-weight: 650;
+}
+.panel-icon {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.panel-count {
+  font-size: 10px;
+}
+.panel-progress {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+.panel-progress-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.panel-progress .stop-button {
+  flex-shrink: 0;
+  min-height: 32px;
+}
+.panel-shell .chat-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+.panel-shell .context-rail {
+  display: none;
+}
+.panel-shell .conversation-scroll,
+.panel-shell .full-pane {
+  padding: 16px;
+}
+.panel-shell .message {
+  font-size: 15px;
+  line-height: 1.65;
+}
+.panel-shell .composer {
+  margin: 8px 12px 12px;
+}
+.panel-shell .statusbar {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 30px;
+  gap: 4px;
+}
+.panel-shell .hover-card {
+  bottom: 60px;
+  max-width: calc(100% - 20px);
+}
+.download-launch {
+  padding: 16px 0;
+}
+.download-launch p {
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+@media (forced-colors: active) {
+  .panel-item.is-selected {
+    outline: 2px solid Highlight;
+  }
+}
+
+.panel-shell .markdown,
+.panel-shell .composer textarea {
+  font-size: 15px;
+  line-height: 1.65;
+}
+.panel-shell .primary,
+.panel-shell .secondary {
+  font-size: 13px;
+}

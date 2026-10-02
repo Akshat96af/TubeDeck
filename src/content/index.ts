@@ -1,3 +1,4 @@
+import { panelHeight } from "../shared/panel-layout";
 import type { PageCommand, Video, Sponsor } from "../shared/types";
 import { abortError, checkAbort, sleep, safeUrl } from "../shared/utils";
 import { extractTranscript } from "./transcript";
@@ -121,6 +122,9 @@ function placePanel() {
       currentId = "";
       emit("video-changed", null);
     }
+    document
+      .querySelector<HTMLElement>("ytd-watch-flexy")
+      ?.removeAttribute("data-tubedeck-layout");
     host?.remove();
     return;
   }
@@ -141,31 +145,48 @@ function placePanel() {
     frame.src = chrome.runtime.getURL("panel.html");
     frame.allow = "clipboard-write";
     frame.style.cssText =
-      "width:100%;height:540px;border:0;display:block;color-scheme:light dark;border-radius:16px;";
+      "width:100%;height:700px;border:0;display:block;color-scheme:light dark;border-radius:16px;";
     host.append(frame);
   }
+  const watch = document.querySelector<HTMLElement>("ytd-watch-flexy");
+  let layoutStyle = document.getElementById("tubedeck-layout-style");
+  if (!layoutStyle) {
+    layoutStyle = document.createElement("style");
+    layoutStyle.id = "tubedeck-layout-style";
+    layoutStyle.textContent = `
+      ytd-watch-flexy[data-tubedeck-layout="side"] #columns { max-width:none !important; display:grid !important; grid-template-columns:380px minmax(0,1fr); gap:20px; padding:0 24px !important; }
+      ytd-watch-flexy[data-tubedeck-layout="side"] #columns > #youtube-companion { grid-column:1; grid-row:1 / span 2; width:380px; align-self:flex-start; position:sticky; top:72px; margin:24px 0 !important; }
+      ytd-watch-flexy[data-tubedeck-layout="side"] #columns > #primary { grid-column:2; grid-row:1; width:100% !important; min-width:0 !important; max-width:none !important; padding-left:0 !important; padding-right:0 !important; }
+      ytd-watch-flexy[data-tubedeck-layout="side"] #columns > #secondary { grid-column:2; grid-row:2; width:100% !important; padding:0 !important; }
+    `;
+    document.head.append(layoutStyle);
+  }
+  const columns = watch?.querySelector<HTMLElement>("#columns");
+  const side = !ctx.theatre && window.innerWidth >= 1100 && Boolean(columns);
+  const layout = side ? "side" : "below";
+  const changed = watch?.dataset.tubedeckLayout !== layout;
+  if (watch) watch.dataset.tubedeckLayout = layout;
   const target = ctx.theatre
     ? document.querySelector("#full-bleed-container")
     : document.querySelector(
         "#player.ytd-watch-flexy, ytd-watch-flexy #player-container-outer",
       );
-  if (target?.parentElement && target.nextElementSibling !== host) {
-    // moveBefore preserves iframe state in browsers supporting state-preserving moves.
-    const parent = target.parentElement as HTMLElement & {
+  const destination = side ? columns : target?.parentElement;
+  const before = side ? columns?.firstElementChild : target?.nextSibling;
+  if (destination && before !== host) {
+    const parent = destination as HTMLElement & {
       moveBefore?: (node: Node, before: Node | null) => void;
     };
     if (host.isConnected && parent.moveBefore)
-      parent.moveBefore(host, target.nextSibling);
-    else target.after(host);
+      parent.moveBefore(host, before || null);
+    else parent.insertBefore(host, before || null);
   }
-  if (ctx.theatre)
-    host.style.cssText =
-      "display:block;width:calc(100% - 48px);max-width:1600px;margin:16px auto 24px;";
-  else
-    host.style.cssText =
-      "display:block;width:100%;min-width:0;margin:12px 0 20px;";
-  if (frame)
-    frame.style.height = frame.dataset.collapsed === "true" ? "76px" : "540px";
+  host.style.cssText = side
+    ? "display:block;min-width:0;"
+    : "display:block;width:calc(100% - 32px);max-width:1600px;margin:16px auto;";
+  if (frame) frame.style.height = `${frame.dataset.panelHeight || 700}px`;
+  if (changed)
+    requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
   if (getVideo() !== lastVideo) {
     lastVideo?.removeEventListener("timeupdate", onTime);
     lastVideo = getVideo();
@@ -406,8 +427,10 @@ window.addEventListener("message", (event) => {
   )
     return;
   if (event.data?.type === "yc-resize" && frame) {
-    frame.dataset.collapsed = String(event.data.collapsed);
-    frame.style.height = event.data.collapsed ? "76px" : "540px";
+    const height = panelHeight(event.data.height);
+    if (height === undefined) return;
+    frame.dataset.panelHeight = String(height);
+    frame.style.height = `${height}px`;
   }
 });
 document.addEventListener("pointermove", (event) => {
@@ -456,6 +479,7 @@ document.addEventListener("pointerout", (event) => {
     pendingHover = "";
   }
 });
+window.addEventListener("resize", placePanel);
 document.addEventListener("yt-navigate-finish", placePanel);
 document.addEventListener("yt-page-data-updated", placePanel);
 let scheduled = false;

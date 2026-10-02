@@ -2,6 +2,7 @@ import type { AIRequest, AIResult, CommentSet } from "../shared/types";
 import { transcriptText, checkAbort, safeSources } from "../shared/utils";
 import { readSSE } from "../shared/sse";
 import { getGeminiKey, getSettings } from "./storage";
+import { fetchWithRetry } from "./retry";
 import { batches } from "../shared/batches";
 const instructions: Record<AIRequest["kind"], string> = {
   recommend:
@@ -79,7 +80,7 @@ export async function generate(
     !request.comments ||
     !["comments", "comment-question"].includes(request.kind)
   )
-    return generateOne(request, signal, onDelta);
+    return generateOne(request, signal, onDelta, onProgress);
   const groups = batches(
     request.comments.items,
     (c) => c.text.length + c.author.length + c.id.length + 30,
@@ -92,7 +93,7 @@ export async function generate(
       detail: "Video transcript omitted for comment-only analysis.",
     },
   };
-  if (groups.length <= 1) return generateOne(base, signal, onDelta);
+  if (groups.length <= 1) return generateOne(base, signal, onDelta, onProgress);
   let tokens = 0;
   const reports: string[] = [];
   for (let i = 0; i < groups.length; i++) {
@@ -110,6 +111,7 @@ export async function generate(
       },
       signal,
       () => {},
+      onProgress,
     );
     tokens += result.tokens;
     reports.push(
@@ -131,6 +133,7 @@ export async function generate(
         },
         signal,
         () => {},
+        onProgress,
       );
       tokens += r.tokens;
       next.push(r.text);
@@ -150,6 +153,7 @@ export async function generate(
     },
     signal,
     onDelta,
+    onProgress,
   );
   result.tokens += tokens;
   return result;
@@ -158,6 +162,7 @@ async function generateOne(
   request: AIRequest,
   signal: AbortSignal,
   onDelta: (text: string) => void,
+  onProgress: (text: string) => void = () => {},
 ): Promise<AIResult> {
   checkAbort(signal);
   const key = await getGeminiKey();
@@ -210,7 +215,7 @@ async function generateOne(
     },
     ...(search ? { tools: [{ google_search: {} }] } : {}),
   };
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${settings.model}:streamGenerateContent?alt=sse`,
     {
       method: "POST",
@@ -218,12 +223,15 @@ async function generateOne(
       body: JSON.stringify(body),
       signal,
     },
+    signal,
+    onProgress,
   );
   if (!response.ok) {
     const messages: Record<number, string> = {
       400: "Gemini rejected this request. Check the model’s input limit and support for images or Google Search.",
       401: "Gemini key authentication failed.",
       403: "This Gemini key does not have access to the requested model or service.",
+      503: "Gemini is temporarily overloaded. Two retries did not succeed. Your work is kept; try again shortly or choose another model in Settings.",
       429: "Gemini quota or rate limit reached. Wait before retrying.",
     };
     throw new Error(

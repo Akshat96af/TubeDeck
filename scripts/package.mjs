@@ -4,6 +4,7 @@ import path from "node:path";
 import { zipSync, unzipSync } from "fflate";
 const manifest = JSON.parse(await readFile("dist/manifest.json", "utf8"));
 const required = [
+  "app-config.json",
   "manifest.json",
   "panel.html",
   "panel.js",

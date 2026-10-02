@@ -38,10 +38,60 @@ async function authRequest(
     body: body instanceof URLSearchParams ? body : JSON.stringify(body),
     signal: AbortSignal.timeout(30000),
   });
-  const result = await response.json();
-  if (!response.ok)
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    const messages: Record<string, string> = {
+      OPERATION_NOT_ALLOWED:
+        "Google sign-in is disabled for TubeDeck. The maintainer must enable the Google provider in Firebase Authentication.",
+      UNAUTHORIZED_DOMAIN:
+        "This extension's callback domain is not authorized. The maintainer must register the hostname shown under Sign-in help in Firebase Authentication.",
+      INVALID_API_KEY:
+        "The Firebase web API key in this build is invalid. The maintainer must update the local app configuration, rebuild, and reload TubeDeck.",
+      API_KEY_INVALID:
+        "The Firebase web API key in this build is invalid. The maintainer must update the local app configuration, rebuild, and reload TubeDeck.",
+      API_KEY_HTTP_REFERRER_BLOCKED:
+        "The Firebase key's website restrictions blocked this extension. The maintainer must review its application restrictions in Google Cloud.",
+      API_KEY_SERVICE_BLOCKED:
+        "The Firebase key is not allowed to call this authentication API. The maintainer must check its Identity Toolkit and Token Service API restrictions.",
+      SERVICE_DISABLED:
+        "The required authentication API is disabled. The maintainer must check the project's enabled APIs.",
+      CONFIGURATION_NOT_FOUND:
+        "Firebase Authentication is not configured for the project associated with this key. The maintainer must check the project and enable Google sign-in.",
+      INVALID_IDP_RESPONSE:
+        "Google and Firebase could not verify this sign-in. The maintainer should check that the OAuth client and Google provider use the same Firebase project.",
+      TOO_MANY_ATTEMPTS_TRY_LATER:
+        "Too many sign-in attempts. Wait a little before trying again.",
+      USER_DISABLED:
+        "This account has been disabled for TubeDeck. Contact the maintainer.",
+    };
+    // Google gateway errors use ErrorInfo.reason; Firebase errors often use a
+    // message code. Only show recognized codes and our text, never raw payloads.
+    const details = Array.isArray(result?.error?.details)
+      ? result.error.details
+      : [];
+    const codes: unknown[] = details
+      .filter(
+        (detail: any) =>
+          detail?.["@type"] === "type.googleapis.com/google.rpc.ErrorInfo",
+      )
+      .map((detail: any) => detail.reason);
+    if (typeof result?.error?.message === "string")
+      codes.push(
+        /^([A-Z][A-Z_0-9]*)(?:\s*:|$)/.exec(result.error.message)?.[1],
+      );
+    const code = codes.find(
+      (candidate): candidate is string =>
+        typeof candidate === "string" && Object.hasOwn(messages, candidate),
+    );
     throw new Error(
-      "Google sign-in could not be completed. Check the Firebase project, enabled Google provider, OAuth client, and redirect URL in settings.",
+      code
+        ? `${messages[code]} (${code}; HTTP ${response.status})`
+        : `Google sign-in could not be completed (Firebase HTTP ${response.status}). Check the app's Google provider, OAuth callback registration, and Firebase API restrictions. See Sign-in help.`,
+    );
+  }
+  if (!result || typeof result !== "object")
+    throw new Error(
+      "Firebase returned an unreadable authentication response. Try again.",
     );
   return result;
 }
@@ -104,7 +154,7 @@ export async function signIn(): Promise<PublicUser> {
   const s = await getSettings();
   if (!s.firebaseApiKey || !s.googleClientId)
     throw new Error(
-      "Complete the Firebase and Google OAuth configuration in settings first.",
+      "Google sign-in is not configured in this build. The maintainer must include the Firebase app configuration.",
     );
   const redirect = chrome.identity.getRedirectURL();
   const state = crypto.randomUUID();
@@ -131,6 +181,10 @@ export async function signIn(): Promise<PublicUser> {
   const params = new URLSearchParams(callback.hash.slice(1));
   if (params.get("state") !== state)
     throw new Error("Sign-in state did not match. Try again.");
+  if (params.get("error") === "access_denied")
+    throw new Error(
+      "Google sign-in was declined. If the app is in testing, the maintainer must add your Google account as a test user.",
+    );
   const token = params.get("access_token");
   if (!token) throw new Error("Google did not return an access token.");
   const data = await authRequest(

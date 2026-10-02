@@ -1,3 +1,5 @@
+import { readMedia } from "./media";
+import { readCaptions } from "./captions";
 import type {
   AIRequest,
   CommentSet,
@@ -168,54 +170,6 @@ async function disconnectIdentity() {
   }
   broadcast("auth", null);
 }
-async function readMedia(tabId: number): Promise<MediaInfo> {
-  const result = await chrome.scripting.executeScript({
-    target: { tabId, frameIds: [0] },
-    world: "MAIN",
-    func: () => {
-      const w = window as unknown as { ytInitialPlayerResponse?: any };
-      const player = document.getElementById("movie_player") as unknown as {
-        getPlayerResponse?: () => any;
-      } | null;
-      const id = new URL(location.href).searchParams.get("v");
-      const candidates = [
-        player?.getPlayerResponse?.(),
-        w.ytInitialPlayerResponse,
-      ];
-      const data = candidates.find((d) => d?.videoDetails?.videoId === id);
-      if (!data)
-        return {
-          videoId: id || "",
-          formats: [],
-          live: false,
-          reason:
-            "The current player did not expose downloadable media formats.",
-        };
-      return {
-        videoId: id || "",
-        formats: [
-          ...(data.streamingData?.formats ?? []),
-          ...(data.streamingData?.adaptiveFormats ?? []),
-        ].map((f) => ({
-          itag: f.itag,
-          url: f.url,
-          mimeType: f.mimeType,
-          qualityLabel: f.qualityLabel,
-          width: f.width,
-          height: f.height,
-          bitrate: f.bitrate,
-          audioQuality: f.audioQuality,
-          contentLength: f.contentLength,
-          signatureCipher: f.signatureCipher,
-          cipher: f.cipher,
-        })),
-        live: Boolean(data.videoDetails?.isLiveContent),
-        reason: data.playabilityStatus?.reason,
-      };
-    },
-  });
-  return result[0]?.result as MediaInfo;
-}
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "companion" || !port.sender?.url?.startsWith(origin))
     return;
@@ -263,12 +217,11 @@ chrome.runtime.onConnect.addListener((port) => {
         data = await snapshot(settingsPage ? undefined : tabId);
       else if (m.action === "settings-save" && settingsPage) {
         const previous = await getSettings(),
-          next = settingsSchema.parse(p.settings);
-        if (
-          previous.firebaseApiKey !== next.firebaseApiKey ||
-          previous.googleClientId !== next.googleClientId
-        )
-          await disconnectIdentity();
+          next = {
+            ...settingsSchema.parse(p.settings),
+            firebaseApiKey: previous.firebaseApiKey,
+            googleClientId: previous.googleClientId,
+          };
         await setSettings(next, p.key);
         data = await getSettings();
         broadcast("settings-changed", data);
@@ -334,13 +287,25 @@ chrome.runtime.onConnect.addListener((port) => {
           requireActive(s);
           if (s.transcript?.segments.length && !p.reload) data = s.transcript;
           else {
-            s.transcript = await page(
-              tabId,
-              "transcript",
-              {},
-              m.id,
-              s.video.id,
-            );
+            let transcript: Transcript;
+            try {
+              transcript = await readCaptions(
+                tabId,
+                s.video.id,
+                controller.signal,
+              );
+            } catch {
+              current();
+              transcript = await page(
+                tabId,
+                "transcript",
+                {},
+                m.id,
+                s.video.id,
+              );
+            }
+            current();
+            s.transcript = transcript;
             data = s.transcript;
           }
         } else if (m.action === "transcript-paste") {

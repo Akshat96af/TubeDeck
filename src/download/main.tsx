@@ -32,6 +32,8 @@ function Download() {
   const locked = useRef(false);
   async function refresh() {
     setError("");
+    setMedia(undefined);
+    setStatus("Checking available video sources...");
     try {
       setSnapshot(await bridge.request<Snapshot>("snapshot").promise);
       setMedia(await bridge.request<MediaInfo>("media").promise);
@@ -39,6 +41,8 @@ function Download() {
       setError(
         e instanceof Error ? e.message : "Could not inspect this video.",
       );
+    } finally {
+      setStatus("");
     }
   }
   useEffect(() => {
@@ -236,8 +240,10 @@ function Download() {
                 : "No downloadable source with audio is available"}
             </h3>
             <p>
-              The current player did not expose a usable direct source. This
-              build cannot unlock protected formats or decipher signatures.
+              {media.formats.some((f) => f.signatureCipher || f.cipher)
+                ? "YouTube provided signature-protected streams for this video. This browser-only downloader cannot currently resolve them."
+                : media.reason ||
+                  "YouTube did not expose a direct video and audio source. Start playback, then refresh available formats."}
             </p>
           </div>
         )}

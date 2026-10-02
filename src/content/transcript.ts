@@ -3,7 +3,7 @@
 import type { Segment, Transcript } from "../shared/types";
 import { checkAbort, parseTime, sleep } from "../shared/utils";
 const selectors =
-  "transcript-segment-view-model, ytd-transcript-segment-renderer";
+  "transcript-segment-view-model, yt-transcript-segment-view-model, ytd-transcript-segment-renderer";
 function first(root: Element, names: string[]) {
   for (const n of names) {
     const el = root.querySelector(n);
@@ -39,19 +39,26 @@ export async function extractTranscript(
         )
         ?.click();
       await sleep(300, signal);
-      const button = Array.from(
-        document.querySelectorAll<HTMLElement>("button,ytd-button-renderer"),
-      ).find(
-        (el) =>
-          /show transcript/i.test(
-            el.getAttribute("aria-label") || el.textContent || "",
-          ) && el.offsetParent !== null,
-      );
+      const endpoint = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "ytd-video-description-transcript-section-renderer button, ytd-video-description-transcript-section-renderer ytd-button-renderer, [target-id='engagement-panel-searchable-transcript'] #visibility-button button",
+        ),
+      ).find((el) => el.offsetParent !== null);
+      const button =
+        endpoint ??
+        Array.from(
+          document.querySelectorAll<HTMLElement>("button,ytd-button-renderer"),
+        ).find(
+          (el) =>
+            /show transcript/i.test(
+              el.getAttribute("aria-label") || el.textContent || "",
+            ) && el.offsetParent !== null,
+        );
       if (button) {
         button.click();
         opened = true;
       }
-      for (let i = 0; i < 24 && !document.querySelector(selectors); i++)
+      for (let i = 0; i < 48 && !document.querySelector(selectors); i++)
         await sleep(250, signal);
     }
     const initial = document.querySelector(selectors);
@@ -70,10 +77,14 @@ export async function extractTranscript(
       document.querySelectorAll(selectors).forEach((el) => {
         const stamp = first(el, [
           ".ytwTranscriptSegmentViewModelTimestamp",
+          ".ytTranscriptSegmentViewModelTimestamp",
           ".segment-timestamp",
           '[class*="Timestamp"]',
         ]);
         const body = first(el, [
+          ".segment-text",
+          ".ytwTranscriptSegmentViewModelText",
+          ".ytTranscriptSegmentViewModelText",
           ".ytAttributedStringHost",
           ".segment-text",
           ".yt-core-attributed-string",
@@ -81,7 +92,8 @@ export async function extractTranscript(
         ]);
         const text = body?.textContent?.trim();
         const start = parseTime(stamp?.textContent ?? "");
-        if (text) segments.set(`${start}:${text}`, { start, end: null, text });
+        if (text && start !== null)
+          segments.set(`${start}:${text}`, { start, end: null, text });
       });
       progress(`Reading transcript · ${segments.size.toLocaleString()} lines`);
       const bottom =

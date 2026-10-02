@@ -1,5 +1,6 @@
 import { openDB } from "idb";
 import type { Note, Settings } from "../shared/types";
+import { getAppConfig } from "./app-config";
 const db = openDB("youtube-companion", 1, {
   upgrade(db) {
     db.createObjectStore("notes", { keyPath: "id" }).createIndex(
@@ -22,12 +23,12 @@ export async function deleteNote(id: string) {
 export async function getSettings(): Promise<Settings> {
   const s = await chrome.storage.local.get(["settings", "geminiKey"]);
   const session = await chrome.storage.session.get("geminiKey");
+  const appConfig = await getAppConfig();
   return {
     model: "gemini-flash-latest",
-    firebaseApiKey: "",
-    googleClientId: "",
     rememberKey: false,
     ...(typeof s.settings === "object" && s.settings ? s.settings : {}),
+    ...appConfig,
     hasKey: Boolean(session.geminiKey || s.geminiKey),
   };
 }
@@ -44,7 +45,9 @@ export async function setSettings(
   key?: string,
 ) {
   const existing = await getGeminiKey().catch(() => "");
-  await chrome.storage.local.set({ settings });
+  await chrome.storage.local.set({
+    settings: { model: settings.model, rememberKey: settings.rememberKey },
+  });
   const next = key?.trim() || existing;
   if (next)
     await (

@@ -42,6 +42,64 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("Google identity and Firebase session", () => {
+  it("recognizes nested Google invalid-key diagnostics without exposing metadata", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            message: "API key not valid. Please pass a valid API key.",
+            details: [
+              {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                reason: "API_KEY_INVALID",
+                metadata: { credential: "must-not-expose" },
+              },
+            ],
+          },
+        },
+        { status: 400 },
+      ),
+    );
+    const error = await (
+      await import("../src/background/auth")
+    )
+      .signIn()
+      .catch((e) => e);
+    expect(error.message).toContain("API_KEY_INVALID; HTTP 400");
+    expect(error.message).toContain("rebuild");
+    expect(error.message).not.toContain("must-not-expose");
+    expect(stored.auth).toBeUndefined();
+  });
+  it("handles non-JSON provider failures with a safe status diagnostic", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("<html>private-error-detail</html>", { status: 502 }),
+    );
+    const error = await (
+      await import("../src/background/auth")
+    )
+      .signIn()
+      .catch((e) => e);
+    expect(error.message).toContain("HTTP 502");
+    expect(error.message).not.toContain("private-error-detail");
+    expect(stored.auth).toBeUndefined();
+  });
+  it("gives actionable provider errors without exposing provider payloads or tokens", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            message: "OPERATION_NOT_ALLOWED",
+            detail: "private-provider-detail",
+          },
+        },
+        { status: 400 },
+      ),
+    );
+    await expect(
+      (await import("../src/background/auth")).signIn(),
+    ).rejects.toThrow("enable the Google provider");
+    expect(stored.auth).toBeUndefined();
+  });
   it("exchanges the Google token only after a valid callback and exposes only public identity", async () => {
     const auth = await import("../src/background/auth");
     expect(await auth.signIn()).toEqual({
@@ -133,7 +191,7 @@ describe("Google identity and Firebase session", () => {
     );
     await expect(
       (await import("../src/background/auth")).signIn(),
-    ).rejects.toThrow("Check the Firebase project");
+    ).rejects.toThrow("See Sign-in help");
     expect(stored.auth).toBeUndefined();
   });
 });
